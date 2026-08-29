@@ -115,30 +115,65 @@
     return `<svg viewBox="0 0 ${width} ${height}" style="width:1em;height:1em;vertical-align:-0.125em;" fill="currentColor"><path d="${pathData}"></path></svg>`;
   }
 
-  // 3:2 is the default: TagCard images render at object-fit: contain inside
+  // 4:3 is the default: TagCard images render at object-fit: contain inside
   // a box whose ratio is ~1.33-1.56 depending on the zoom level
   // (ui/v2.5/src/components/Tags/TagCardGrid.tsx's zoomWidths vs
-  // index.scss's fixed .tag-card-image heights per zoom class) - 3:2 (1.5)
-  // sits in the middle of that range, close enough at every zoom level that
-  // it never needs much letterboxing.
+  // index.scss's fixed .tag-card-image heights per zoom class) - 4:3 (1.333)
+  // matches exactly at the two larger zoom levels and is closest on average.
+  // 1:1 is offered alongside it since 4:3 and 16:9 read as too similar a
+  // choice on their own.
   const CROP_ASPECT_RATIOS = [
-    { label: "3:2", value: 3 / 2, isDefault: true },
+    { label: "1:1", value: 1, isDefault: true },
+    { label: "4:3", value: 4 / 3 },
     { label: "16:9", value: 16 / 9 },
     { label: "9:16", value: 9 / 16 },
     { label: "Free", value: NaN },
   ];
 
-  // Renders `srcUrl` into `imgContainer` with a small crop-icon overlay (top
-  // right of the image) that activates Cropper.js on click - defaulting to a
-  // 4:3 aspect-ratio lock, with buttons to switch to 16:9, 9:16, or Free
-  // (unlocked) - plus a single green Save button appended to
-  // `actionsContainer`. Save reports the cropped result if cropping was
-  // activated, otherwise the original `srcUrl` untouched. A small "x" button
-  // next to the aspect-ratio controls exits crop mode and returns to the
-  // plain image (crop icon reappears) without discarding the whole
-  // flow/closing the modal. Returns { destroy() } so the caller can clean up
-  // the Cropper instance on cancel/close/view-switch.
+  // Draws a centered square crop of an already-loaded <img> element.
+  // Returns { dataUrl, rect } - `rect` (the exact region used) is later
+  // handed to Cropper.js's setData() so entering crop mode starts from the
+  // same square instead of a fresh auto-centered guess, making it feel like
+  // refining what's already shown rather than starting over.
+  function squareCropOf(imgEl) {
+    const side = Math.min(imgEl.naturalWidth, imgEl.naturalHeight);
+    const rect = {
+      x: (imgEl.naturalWidth - side) / 2,
+      y: (imgEl.naturalHeight - side) / 2,
+      width: side,
+      height: side,
+    };
+    const canvas = document.createElement("canvas");
+    canvas.width = side;
+    canvas.height = side;
+    canvas
+      .getContext("2d")
+      .drawImage(imgEl, rect.x, rect.y, rect.width, rect.height, 0, 0, side, side);
+    return { dataUrl: canvas.toDataURL("image/jpeg", 0.92), rect };
+  }
+
+  // Renders `srcUrl` into `imgContainer` as a plain image (no crop UI
+  // visible yet) - except the image shown/saved by default is already a
+  // centered 1:1 crop of the original, computed once it's actually loaded
+  // (see applySquarePreview() below), not the full original. Clicking the
+  // crop-icon
+  // overlay switches to the original full image with interactive Cropper.js
+  // controls (seeded to that same square, so it reads as "adjust this" not
+  // "start over") and a ratio toolbar: 1:1 (default), 4:3, 16:9, 9:16, Free,
+  // plus "Full" - which discards cropping entirely and reverts to the full,
+  // uncropped original (also reachable at any time, not just on entry). A
+  // single green Save button is appended to `actionsContainer`, reporting
+  // the cropped result while Cropper is active, otherwise whatever's
+  // currently displayed (the square preview, or the full original after
+  // "Full"). Returns { destroy() } so the caller can clean up the Cropper
+  // instance on cancel/close/view-switch.
   function buildCropUI(imgContainer, actionsContainer, srcUrl, onSave) {
+    // `wrapper` is inline-block so it only takes up as much width as the
+    // image needs (important once the image is a narrower square crop, not
+    // always a near-full-width landscape) - centering it needs the parent's
+    // text-align, not just wrapper's own styles.
+    imgContainer.style.textAlign = "center";
+
     const wrapper = document.createElement("div");
     wrapper.style.position = "relative";
     wrapper.style.display = "inline-block";
@@ -147,20 +182,35 @@
     // Toggled between "d-none" and "d-flex ..." (not a plain inline
     // style.display) - Bootstrap's utility classes set `display` with
     // `!important`, which would otherwise permanently win over an inline
-    // style and keep this visible regardless of crop state.
+    // style and keep this visible regardless of crop state. Appended after
+    // `wrapper` so it renders below the image, still above the Save/Cancel
+    // row in `actionsContainer`.
     const cropToolbar = document.createElement("div");
     cropToolbar.className = "d-none";
     cropToolbar.style.gap = "6px";
-    imgContainer.appendChild(cropToolbar);
     imgContainer.appendChild(wrapper);
+    imgContainer.appendChild(cropToolbar);
 
+    // Hidden until either the square preview is applied or crop mode is
+    // entered - otherwise the full original flashes on screen first and
+    // then visibly jumps to the (usually smaller/differently-shaped) square
+    // crop a moment later.
     const img = document.createElement("img");
     img.src = srcUrl;
     img.style.display = "block";
     img.style.maxWidth = "100%";
+    img.style.visibility = "hidden";
     wrapper.appendChild(img);
 
     let cropper = null;
+    // What Save reports when Cropper isn't active - starts as the original,
+    // gets replaced with the square preview once it's ready (or with the
+    // full original again after "Full" is picked).
+    let currentValue = srcUrl;
+    // The centered-square region applySquarePreview() used, hitched onto
+    // Cropper's first crop box via setData() so it starts where the preview
+    // already was. Null until the image has actually loaded.
+    let squareRect = null;
     const aspectBtns = [];
 
     function setActiveAspect(value) {
@@ -169,6 +219,12 @@
           (Number.isNaN(ratio) && Number.isNaN(value)) || ratio === value;
         btn.classList.toggle("active", isMatch);
       });
+      fullBtn.classList.remove("active");
+    }
+
+    function setActiveFull() {
+      aspectBtns.forEach(({ btn }) => btn.classList.remove("active"));
+      fullBtn.classList.add("active");
     }
 
     function enterCropMode() {
@@ -176,6 +232,12 @@
       cropIconBtn.style.display = "none";
       cropToolbar.className =
         "d-flex flex-row justify-content-center align-items-center mb-2";
+      // Cropping always operates on the original full image, regardless of
+      // what's currently displayed (the square preview, or "Full"'s
+      // original) - otherwise adjusting couldn't recover anything the
+      // square preview's auto-crop had cut off.
+      img.src = srcUrl;
+      img.style.visibility = "visible";
       const defaultRatio = CROP_ASPECT_RATIOS.find((r) => r.isDefault).value;
       cropper = new Cropper(img, {
         viewMode: 1,
@@ -186,17 +248,25 @@
         zoomable: false,
         zoomOnTouch: false,
         zoomOnWheel: false,
+        ready() {
+          if (squareRect) cropper.setData(squareRect);
+        },
       });
       setActiveAspect(defaultRatio);
     }
 
-    function exitCropMode() {
+    // "Full" - no crop at all. Reachable both to skip cropping on first
+    // entry and to back out of an in-progress crop.
+    function selectFull() {
       if (cropper) {
         cropper.destroy();
         cropper = null;
       }
       cropToolbar.className = "d-none";
       cropIconBtn.style.display = "inline-block";
+      img.src = srcUrl;
+      img.style.visibility = "visible";
+      currentValue = srcUrl;
     }
 
     const cropIconBtn = document.createElement("button");
@@ -225,13 +295,16 @@
       cropToolbar.appendChild(btn);
     });
 
-    const exitCropBtn = document.createElement("button");
-    exitCropBtn.type = "button";
-    exitCropBtn.className = "btn btn-outline-light btn-sm";
-    exitCropBtn.title = "Back (discard crop, keep original)";
-    exitCropBtn.innerHTML = faIconMarkup(PluginApi.libraries.FontAwesomeSolid.faXmark);
-    exitCropBtn.addEventListener("click", exitCropMode);
-    cropToolbar.appendChild(exitCropBtn);
+    const fullBtn = document.createElement("button");
+    fullBtn.type = "button";
+    fullBtn.className = "btn btn-outline-light btn-sm";
+    fullBtn.innerText = "Full";
+    fullBtn.title = "No crop - use the entire image";
+    fullBtn.addEventListener("click", () => {
+      selectFull();
+      setActiveFull();
+    });
+    cropToolbar.appendChild(fullBtn);
 
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn btn-success";
@@ -239,10 +312,35 @@
     saveBtn.addEventListener("click", () => {
       const value = cropper
         ? cropper.getCroppedCanvas().toDataURL("image/jpeg")
-        : srcUrl;
+        : currentValue;
       onSave(value);
     });
     actionsContainer.appendChild(saveBtn);
+
+    // Computed from the same <img> that's already loading `srcUrl` above,
+    // once it's actually loaded - not a second Image() reloading the same
+    // source, which for a large data: URI (e.g. a full-res captured video
+    // frame) meant decoding the same multi-MB string twice at once.
+    function applySquarePreview() {
+      if (cropper) return; // already in crop mode with the full image
+      if (!img.naturalWidth) {
+        // Failed to load / no dimensions available - nothing to crop, but
+        // still reveal whatever's there rather than leaving it hidden.
+        img.style.visibility = "visible";
+        return;
+      }
+      const { dataUrl, rect } = squareCropOf(img);
+      squareRect = rect;
+      currentValue = dataUrl;
+      img.src = dataUrl;
+      img.style.visibility = "visible";
+    }
+
+    if (img.complete && img.naturalWidth) {
+      applySquarePreview();
+    } else {
+      img.addEventListener("load", applySquarePreview, { once: true });
+    }
 
     return {
       destroy() {
@@ -315,6 +413,23 @@
     return canvas.toDataURL("image/jpeg", 0.92);
   }
 
+  // Resolves once `video` fires `eventName`, or after `timeoutMs` regardless
+  // (some browsers/streams don't reliably fire seeked/loadeddata/canplay in
+  // every situation, so this never hangs forever).
+  function waitForVideoEvent(video, eventName, timeoutMs) {
+    return new Promise((resolve) => {
+      let settled = false;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener(eventName, finish);
+        resolve();
+      }
+      video.addEventListener(eventName, finish);
+      setTimeout(finish, timeoutMs);
+    });
+  }
+
   // Same as captureVideoFrame, but first gives the video a brief grace
   // period to have decoded frame data if it doesn't yet. Needed because
   // picking a thumbnail seeks the real player (video.currentTime = ...),
@@ -322,54 +437,46 @@
   // (videoWidth/readyState momentarily 0) right after - capturing
   // immediately in that window would otherwise fail even though the video
   // is fine a moment later.
-  function captureVideoFrameAsync(timeoutMs) {
+  async function captureVideoFrameAsync(timeoutMs) {
     const video = findVideoElement();
-    if (!video) return Promise.resolve(null);
+    if (!video) return null;
     if (video.readyState >= 2 && video.videoWidth) {
-      return Promise.resolve(captureVideoFrame());
+      return captureVideoFrame();
     }
-    return new Promise((resolve) => {
-      let settled = false;
-      function finish() {
-        if (settled) return;
-        settled = true;
-        video.removeEventListener("loadeddata", finish);
-        video.removeEventListener("canplay", finish);
-        resolve(captureVideoFrame());
-      }
-      video.addEventListener("loadeddata", finish);
-      video.addEventListener("canplay", finish);
-      setTimeout(finish, timeoutMs || 1500);
-    });
+    await Promise.race([
+      waitForVideoEvent(video, "loadeddata", timeoutMs || 1500),
+      waitForVideoEvent(video, "canplay", timeoutMs || 1500),
+    ]);
+    return captureVideoFrame();
   }
 
-  // Seeks the scene's <video> element to `targetSeconds` and resolves with a
-  // full-res captured frame once the seek settles (or after a 2s safety
-  // timeout, in case 'seeked' never fires).
-  function seekAndCaptureFrame(targetSeconds) {
-    return new Promise((resolve) => {
-      const video = findVideoElement();
-      if (!video) {
-        resolve(null);
-        return;
-      }
+  // Seeks the scene's <video> element to `targetSeconds`, captures a full-res
+  // frame once the seek settles (or after a 2s safety timeout, in case
+  // 'seeked' never fires), then seeks back to wherever the viewer actually
+  // was. Picking a thumbnail to grab an image for a tag shouldn't leave
+  // their actual playback position changed - the seek is only a means to
+  // get a decoded frame at that timestamp, not something they asked for.
+  async function seekAndCaptureFrame(targetSeconds) {
+    const video = findVideoElement();
+    if (!video) return null;
 
-      let settled = false;
-      function finish() {
-        if (settled) return;
-        settled = true;
-        video.removeEventListener("seeked", finish);
-        resolve(captureVideoFrame());
-      }
+    const originalTime = video.currentTime;
+    try {
+      video.currentTime = targetSeconds;
+    } catch (err) {
+      return null;
+    }
+    await waitForVideoEvent(video, "seeked", 2000);
+    const dataUrl = captureVideoFrame();
 
-      video.addEventListener("seeked", finish);
-      setTimeout(finish, 2000);
-      try {
-        video.currentTime = targetSeconds;
-      } catch (err) {
-        finish();
-      }
-    });
+    try {
+      video.currentTime = originalTime;
+    } catch (err) {
+      // best effort - worth keeping the captured frame either way
+    }
+    await waitForVideoEvent(video, "seeked", 1500);
+
+    return dataUrl;
   }
 
   function getSceneIdFromUrl() {
