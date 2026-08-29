@@ -104,18 +104,54 @@
     return null;
   }
 
+  // Cropper.js ships no icons of its own (it's a pure image-manipulation
+  // library - crop-box/grid CSS only). Renders a FontAwesome icon
+  // definition (from PluginApi.libraries.FontAwesomeSolid, the same icon
+  // set the rest of Stash's UI uses) as a plain inline SVG string, since
+  // this modal is built with vanilla DOM rather than React and can't use
+  // the <FontAwesomeIcon> component directly.
+  function faIconMarkup(iconDef) {
+    const [width, height, , , pathData] = iconDef.icon;
+    return `<svg viewBox="0 0 ${width} ${height}" style="width:1em;height:1em;vertical-align:-0.125em;" fill="currentColor"><path d="${pathData}"></path></svg>`;
+  }
+
+  // 3:2 is the default: TagCard images render at object-fit: contain inside
+  // a box whose ratio is ~1.33-1.56 depending on the zoom level
+  // (ui/v2.5/src/components/Tags/TagCardGrid.tsx's zoomWidths vs
+  // index.scss's fixed .tag-card-image heights per zoom class) - 3:2 (1.5)
+  // sits in the middle of that range, close enough at every zoom level that
+  // it never needs much letterboxing.
+  const CROP_ASPECT_RATIOS = [
+    { label: "3:2", value: 3 / 2, isDefault: true },
+    { label: "16:9", value: 16 / 9 },
+    { label: "9:16", value: 9 / 16 },
+    { label: "Free", value: NaN },
+  ];
+
   // Renders `srcUrl` into `imgContainer` with a small crop-icon overlay (top
-  // right of the image) that activates Cropper.js on click, plus a single
-  // green Save button appended to `actionsContainer`. Save reports the
-  // cropped result if cropping was activated, otherwise the original
-  // `srcUrl` untouched - callers don't need a separate "use as-is" control.
-  // Returns { destroy() } so the caller can clean up the Cropper instance on
-  // cancel/close/view-switch.
+  // right of the image) that activates Cropper.js on click - defaulting to a
+  // 4:3 aspect-ratio lock, with buttons to switch to 16:9, 9:16, or Free
+  // (unlocked) - plus a single green Save button appended to
+  // `actionsContainer`. Save reports the cropped result if cropping was
+  // activated, otherwise the original `srcUrl` untouched. A small "x" button
+  // next to the aspect-ratio controls exits crop mode and returns to the
+  // plain image (crop icon reappears) without discarding the whole
+  // flow/closing the modal. Returns { destroy() } so the caller can clean up
+  // the Cropper instance on cancel/close/view-switch.
   function buildCropUI(imgContainer, actionsContainer, srcUrl, onSave) {
     const wrapper = document.createElement("div");
     wrapper.style.position = "relative";
     wrapper.style.display = "inline-block";
     wrapper.style.maxWidth = "100%";
+
+    // Toggled between "d-none" and "d-flex ..." (not a plain inline
+    // style.display) - Bootstrap's utility classes set `display` with
+    // `!important`, which would otherwise permanently win over an inline
+    // style and keep this visible regardless of crop state.
+    const cropToolbar = document.createElement("div");
+    cropToolbar.className = "d-none";
+    cropToolbar.style.gap = "6px";
+    imgContainer.appendChild(cropToolbar);
     imgContainer.appendChild(wrapper);
 
     const img = document.createElement("img");
@@ -125,21 +161,25 @@
     wrapper.appendChild(img);
 
     let cropper = null;
+    const aspectBtns = [];
 
-    const cropIconBtn = document.createElement("button");
-    cropIconBtn.type = "button";
-    cropIconBtn.className = "btn btn-secondary btn-sm";
-    cropIconBtn.title = "Crop";
-    cropIconBtn.innerText = "✂️";
-    cropIconBtn.style.position = "absolute";
-    cropIconBtn.style.top = "8px";
-    cropIconBtn.style.right = "8px";
-    cropIconBtn.style.zIndex = "10";
-    cropIconBtn.addEventListener("click", () => {
+    function setActiveAspect(value) {
+      aspectBtns.forEach(({ btn, ratio }) => {
+        const isMatch =
+          (Number.isNaN(ratio) && Number.isNaN(value)) || ratio === value;
+        btn.classList.toggle("active", isMatch);
+      });
+    }
+
+    function enterCropMode() {
       if (cropper) return;
       cropIconBtn.style.display = "none";
+      cropToolbar.className =
+        "d-flex flex-row justify-content-center align-items-center mb-2";
+      const defaultRatio = CROP_ASPECT_RATIOS.find((r) => r.isDefault).value;
       cropper = new Cropper(img, {
         viewMode: 1,
+        aspectRatio: defaultRatio,
         movable: false,
         rotatable: false,
         scalable: false,
@@ -147,8 +187,51 @@
         zoomOnTouch: false,
         zoomOnWheel: false,
       });
-    });
+      setActiveAspect(defaultRatio);
+    }
+
+    function exitCropMode() {
+      if (cropper) {
+        cropper.destroy();
+        cropper = null;
+      }
+      cropToolbar.className = "d-none";
+      cropIconBtn.style.display = "inline-block";
+    }
+
+    const cropIconBtn = document.createElement("button");
+    cropIconBtn.type = "button";
+    cropIconBtn.className = "btn btn-secondary btn-sm";
+    cropIconBtn.title = "Crop";
+    cropIconBtn.innerHTML = faIconMarkup(PluginApi.libraries.FontAwesomeSolid.faCrop);
+    cropIconBtn.style.position = "absolute";
+    cropIconBtn.style.top = "8px";
+    cropIconBtn.style.right = "8px";
+    cropIconBtn.style.zIndex = "10";
+    cropIconBtn.addEventListener("click", enterCropMode);
     wrapper.appendChild(cropIconBtn);
+
+    CROP_ASPECT_RATIOS.forEach(({ label, value }) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-outline-light btn-sm";
+      btn.innerText = label;
+      btn.addEventListener("click", () => {
+        if (!cropper) return;
+        cropper.setAspectRatio(value);
+        setActiveAspect(value);
+      });
+      aspectBtns.push({ btn, ratio: value });
+      cropToolbar.appendChild(btn);
+    });
+
+    const exitCropBtn = document.createElement("button");
+    exitCropBtn.type = "button";
+    exitCropBtn.className = "btn btn-outline-light btn-sm";
+    exitCropBtn.title = "Back (discard crop, keep original)";
+    exitCropBtn.innerHTML = faIconMarkup(PluginApi.libraries.FontAwesomeSolid.faXmark);
+    exitCropBtn.addEventListener("click", exitCropMode);
+    cropToolbar.appendChild(exitCropBtn);
 
     const saveBtn = document.createElement("button");
     saveBtn.className = "btn btn-success";
