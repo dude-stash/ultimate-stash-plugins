@@ -1,7 +1,7 @@
 name: Tag Image Grabber
 # requires: CommunityScriptsUILibrary
-description: Grab an image for a tag from an already-tagged image or a scene's cover, right from the tag chip
-version: 0.1
+description: Grab an image for a tag from an already-tagged image, or from a scene's cover, thumbnail grid, or a live-captured video frame
+version: 0.2
 ui:
   requires:
     - CommunityScriptsUILibrary
