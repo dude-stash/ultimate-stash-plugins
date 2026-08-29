@@ -19,6 +19,7 @@
 (function () {
   const PluginApi = window.PluginApi;
   const React = PluginApi.React;
+  const Apollo = PluginApi.libraries.Apollo;
   const csLib = window.csLib;
 
   const TAG_UPDATE_MUTATION = `mutation TagImageGrabberUpdate($input: TagUpdateInput!) { tagUpdate(input: $input) { id } }`;
@@ -26,6 +27,52 @@
   async function saveTagImage(tagId, imageValue) {
     const variables = { input: { id: tagId, image: imageValue } };
     await csLib.callGQL({ query: TAG_UPDATE_MUTATION, variables });
+  }
+
+  // The save above goes straight over fetch(), bypassing Apollo entirely, so
+  // Apollo's in-memory cache still holds the tag's old image_path - anything
+  // reading it (e.g. the tag hover-preview popover) would keep showing the
+  // old image until a full reload.
+  //
+  // IMPORTANT: this must patch the field in place (writeFragment), not evict
+  // the whole Tag entity. Evicting it removes the object outright, and any
+  // currently-mounted query whose result includes that tag (e.g. the scene's
+  // own tags list, which is what's on screen right when you'd click Save)
+  // loses a piece it depends on - Apollo can't rebuild it without a network
+  // round-trip, so the tag chip just vanishes from that list until something
+  // else triggers a refetch (a page reload). A surgical field update instead
+  // refreshes image_path in place without disturbing the tag's presence
+  // anywhere else, and every active query watching that field re-renders
+  // with the new value automatically. The image URL itself is already
+  // cache-busted server-side (image_path includes ?t=<updated_at>), so
+  // fetching the fresh value is all that's needed.
+  async function refreshTagImageInCache(apolloClient, tagId) {
+    if (!apolloClient) return;
+    try {
+      const query = `query TagImageGrabberRefreshImage($id: ID!) { findTag(id: $id) { id image_path } }`;
+      const data = await csLib.callGQL({ query, variables: { id: tagId } });
+      const tag = data && data.findTag;
+      if (!tag) return;
+
+      const cacheId = apolloClient.cache.identify({
+        __typename: "Tag",
+        id: tagId,
+      });
+      if (!cacheId) return;
+
+      apolloClient.writeFragment({
+        id: cacheId,
+        fragment: Apollo.gql`
+          fragment TagImageGrabberRefreshedImage on Tag {
+            id
+            image_path
+          }
+        `,
+        data: { __typename: "Tag", id: tag.id, image_path: tag.image_path },
+      });
+    } catch (err) {
+      // best-effort - a stale hover preview isn't worth failing the save over
+    }
   }
 
   // Determines what kind of detail page we're currently on, purely from the
@@ -57,9 +104,73 @@
     return null;
   }
 
+  // Renders `srcUrl` into `imgContainer` with a small crop-icon overlay (top
+  // right of the image) that activates Cropper.js on click, plus a single
+  // green Save button appended to `actionsContainer`. Save reports the
+  // cropped result if cropping was activated, otherwise the original
+  // `srcUrl` untouched - callers don't need a separate "use as-is" control.
+  // Returns { destroy() } so the caller can clean up the Cropper instance on
+  // cancel/close/view-switch.
+  function buildCropUI(imgContainer, actionsContainer, srcUrl, onSave) {
+    const wrapper = document.createElement("div");
+    wrapper.style.position = "relative";
+    wrapper.style.display = "inline-block";
+    wrapper.style.maxWidth = "100%";
+    imgContainer.appendChild(wrapper);
+
+    const img = document.createElement("img");
+    img.src = srcUrl;
+    img.style.display = "block";
+    img.style.maxWidth = "100%";
+    wrapper.appendChild(img);
+
+    let cropper = null;
+
+    const cropIconBtn = document.createElement("button");
+    cropIconBtn.type = "button";
+    cropIconBtn.className = "btn btn-secondary btn-sm";
+    cropIconBtn.title = "Crop";
+    cropIconBtn.innerText = "✂️";
+    cropIconBtn.style.position = "absolute";
+    cropIconBtn.style.top = "8px";
+    cropIconBtn.style.right = "8px";
+    cropIconBtn.style.zIndex = "10";
+    cropIconBtn.addEventListener("click", () => {
+      if (cropper) return;
+      cropIconBtn.style.display = "none";
+      cropper = new Cropper(img, {
+        viewMode: 1,
+        movable: false,
+        rotatable: false,
+        scalable: false,
+        zoomable: false,
+        zoomOnTouch: false,
+        zoomOnWheel: false,
+      });
+    });
+    wrapper.appendChild(cropIconBtn);
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "btn btn-success";
+    saveBtn.innerText = "Save";
+    saveBtn.addEventListener("click", () => {
+      const value = cropper
+        ? cropper.getCroppedCanvas().toDataURL("image/jpeg")
+        : srcUrl;
+      onSave(value);
+    });
+    actionsContainer.appendChild(saveBtn);
+
+    return {
+      destroy() {
+        if (cropper) cropper.destroy();
+      },
+    };
+  }
+
   // Opens a crop dialog seeded from `srcUrl`. Calls onDone(dataUrlOrUrl) once
-  // the user confirms - either a cropped data URL, or the original URL if
-  // they choose to use it as-is.
+  // the user hits Save - either a cropped data URL, or the original URL if
+  // they never activated cropping.
   function openCropDialog(srcUrl, onDone) {
     const modal = document.createElement("dialog");
     modal.className = "tag-image-grabber-modal bg-dark";
@@ -73,12 +184,6 @@
     container.style.width = "100%";
     modal.appendChild(container);
 
-    const img = document.createElement("img");
-    img.src = srcUrl;
-    img.style.display = "block";
-    img.style.maxWidth = "100%";
-    container.appendChild(img);
-
     const btnRow = document.createElement("div");
     btnRow.className =
       "d-flex flex-row justify-content-center align-items-center";
@@ -86,47 +191,16 @@
     btnRow.style.marginTop = "10px";
     modal.appendChild(btnRow);
 
-    let cropper = null;
-
     function cleanup() {
-      if (cropper) cropper.destroy();
+      cropUI.destroy();
       modal.close();
       modal.remove();
     }
 
-    const useOriginalBtn = document.createElement("button");
-    useOriginalBtn.className = "btn btn-secondary";
-    useOriginalBtn.innerText = "Use as-is";
-    useOriginalBtn.addEventListener("click", () => {
+    const cropUI = buildCropUI(container, btnRow, srcUrl, (value) => {
       cleanup();
-      onDone(srcUrl);
+      onDone(value);
     });
-    btnRow.appendChild(useOriginalBtn);
-
-    const cropBtn = document.createElement("button");
-    cropBtn.className = "btn btn-primary";
-    cropBtn.innerText = "Crop";
-    cropBtn.addEventListener("click", () => {
-      if (!cropper) {
-        cropper = new Cropper(img, {
-          viewMode: 1,
-          movable: false,
-          rotatable: false,
-          scalable: false,
-          zoomable: false,
-          zoomOnTouch: false,
-          zoomOnWheel: false,
-          ready() {
-            cropBtn.innerText = "Save crop";
-          },
-        });
-        return;
-      }
-      const dataUrl = cropper.getCroppedCanvas().toDataURL("image/jpeg");
-      cleanup();
-      onDone(dataUrl);
-    });
-    btnRow.appendChild(cropBtn);
 
     const cancelBtn = document.createElement("button");
     cancelBtn.className = "btn btn-danger";
@@ -156,6 +230,34 @@
     canvas.height = video.videoHeight;
     canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", 0.92);
+  }
+
+  // Same as captureVideoFrame, but first gives the video a brief grace
+  // period to have decoded frame data if it doesn't yet. Needed because
+  // picking a thumbnail seeks the real player (video.currentTime = ...),
+  // which can leave the element in a transient buffering/stalled state
+  // (videoWidth/readyState momentarily 0) right after - capturing
+  // immediately in that window would otherwise fail even though the video
+  // is fine a moment later.
+  function captureVideoFrameAsync(timeoutMs) {
+    const video = findVideoElement();
+    if (!video) return Promise.resolve(null);
+    if (video.readyState >= 2 && video.videoWidth) {
+      return Promise.resolve(captureVideoFrame());
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        video.removeEventListener("loadeddata", finish);
+        video.removeEventListener("canplay", finish);
+        resolve(captureVideoFrame());
+      }
+      video.addEventListener("loadeddata", finish);
+      video.addEventListener("canplay", finish);
+      setTimeout(finish, timeoutMs || 1500);
+    });
   }
 
   // Seeks the scene's <video> element to `targetSeconds` and resolves with a
@@ -269,36 +371,6 @@
     return sprites;
   }
 
-  // Crops a single tile out of the (shared, multi-tile) sprite sheet into
-  // its own image, so downstream code (crop dialog, save) just sees a plain
-  // image rather than a sprite URL + region.
-  function extractSpriteTileDataUrl(sprite) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = sprite.w;
-        canvas.height = sprite.h;
-        canvas
-          .getContext("2d")
-          .drawImage(
-            img,
-            sprite.x,
-            sprite.y,
-            sprite.w,
-            sprite.h,
-            0,
-            0,
-            sprite.w,
-            sprite.h
-          );
-        resolve(canvas.toDataURL("image/jpeg", 0.92));
-      };
-      img.onerror = () => resolve(null);
-      img.src = sprite.url;
-    });
-  }
-
   // Determines what to open the Scene picker modal on, in order: the
   // already-rendered <img class="scene-cover"> DOM element (only present
   // once the Edit tab has been visited - the Details tab, which is where
@@ -307,7 +379,7 @@
   // placeholder-SVG fallback; else the sprite/VTT thumbnail grid, if
   // generated; else a live capture of whatever frame the video is currently
   // on. Returns { kind: "cover", coverUrl, paths } | { kind: "thumbnails",
-  // paths } | { kind: "none" }.
+  // paths } | { kind: "capture", coverUrl, paths } | { kind: "none" }.
   async function resolveSceneImageStart() {
     const domCover = findSourceImageUrl("scene");
     if (domCover) return { kind: "cover", coverUrl: domCover, paths: null };
@@ -330,9 +402,9 @@
       return { kind: "thumbnails", paths };
     }
 
-    const captured = captureVideoFrame();
+    const captured = await captureVideoFrameAsync();
     if (captured) {
-      return { kind: "cover", coverUrl: captured, paths };
+      return { kind: "capture", coverUrl: captured, paths };
     }
 
     return { kind: "none" };
@@ -362,18 +434,24 @@
     contentArea.style.width = "100%";
     modal.appendChild(contentArea);
 
+    // One flex row holds both the view-specific action buttons (Save, etc.
+    // - cleared/rebuilt on every view switch) and the persistent Cancel
+    // button, so they always render side by side. actionRow uses
+    // `display: contents` so clearing its innerHTML doesn't disturb Cancel,
+    // which lives as its sibling in the same flex row rather than inside it.
+    const bottomRow = document.createElement("div");
+    bottomRow.className =
+      "d-flex flex-row justify-content-center align-items-center mt-2";
+    bottomRow.style.gap = "10px";
+    modal.appendChild(bottomRow);
+
     const actionRow = document.createElement("div");
-    actionRow.className =
-      "d-flex flex-row justify-content-center align-items-center mt-2";
-    actionRow.style.gap = "10px";
-    modal.appendChild(actionRow);
+    actionRow.style.display = "contents";
+    bottomRow.appendChild(actionRow);
 
-    const cancelRow = document.createElement("div");
-    cancelRow.className =
-      "d-flex flex-row justify-content-center align-items-center mt-2";
-    modal.appendChild(cancelRow);
-
-    let cropper = null;
+    // Tracks the active buildCropUI() instance so it can be torn down on
+    // cleanup/view-switch, same role the old bare `cropper` variable played.
+    let activeCropUI = null;
     // Bumped on every view switch so a still-in-flight async load (e.g.
     // fetching the sprite vtt) can tell it's stale and not repaint over
     // whatever view the user has since switched to.
@@ -383,16 +461,16 @@
     let cachedPaths = start.paths || null;
 
     function cleanup() {
-      if (cropper) cropper.destroy();
+      if (activeCropUI) activeCropUI.destroy();
       modal.close();
       modal.remove();
     }
 
     function resetContent() {
       viewToken++;
-      if (cropper) {
-        cropper.destroy();
-        cropper = null;
+      if (activeCropUI) {
+        activeCropUI.destroy();
+        activeCropUI = null;
       }
       contentArea.innerHTML = "";
       actionRow.innerHTML = "";
@@ -401,98 +479,23 @@
 
     function showCropView(srcUrl) {
       resetContent();
-
-      const img = document.createElement("img");
-      img.src = srcUrl;
-      img.style.display = "block";
-      img.style.maxWidth = "100%";
-      contentArea.appendChild(img);
-
-      const useOriginalBtn = document.createElement("button");
-      useOriginalBtn.className = "btn btn-secondary";
-      useOriginalBtn.innerText = "Use as-is";
-      useOriginalBtn.addEventListener("click", () => {
+      activeCropUI = buildCropUI(contentArea, actionRow, srcUrl, (value) => {
         cleanup();
-        onImageReady(srcUrl);
+        onImageReady(value);
       });
-      actionRow.appendChild(useOriginalBtn);
-
-      const cropBtn = document.createElement("button");
-      cropBtn.className = "btn btn-primary";
-      cropBtn.innerText = "Crop";
-      cropBtn.addEventListener("click", () => {
-        if (!cropper) {
-          cropper = new Cropper(img, {
-            viewMode: 1,
-            movable: false,
-            rotatable: false,
-            scalable: false,
-            zoomable: false,
-            zoomOnTouch: false,
-            zoomOnWheel: false,
-            ready() {
-              cropBtn.innerText = "Save crop";
-            },
-          });
-          return;
-        }
-        const dataUrl = cropper.getCroppedCanvas().toDataURL("image/jpeg");
-        cleanup();
-        onImageReady(dataUrl);
-      });
-      actionRow.appendChild(cropBtn);
     }
 
-    function showTileChoiceView(sprite) {
-      resetContent();
-
-      const label = document.createElement("p");
-      label.className = "text-white text-center";
-      label.innerText = `Thumbnail at ~${Math.round(sprite.start)}s`;
-      contentArea.appendChild(label);
-
-      const preview = document.createElement("div");
-      preview.style.width = `${sprite.w}px`;
-      preview.style.height = `${sprite.h}px`;
-      preview.style.margin = "0 auto";
-      preview.style.backgroundImage = `url(${sprite.url})`;
-      preview.style.backgroundPosition = `-${sprite.x}px -${sprite.y}px`;
-      preview.style.backgroundRepeat = "no-repeat";
-      contentArea.appendChild(preview);
-
-      const useTileBtn = document.createElement("button");
-      useTileBtn.className = "btn btn-secondary";
-      useTileBtn.innerText = "Use this thumbnail (fast, low-res)";
-      useTileBtn.addEventListener("click", async () => {
-        const dataUrl = await extractSpriteTileDataUrl(sprite);
-        if (!dataUrl) {
-          window.alert("Tag Image Grabber: failed to read the sprite sheet.");
-          return;
-        }
-        showCropView(dataUrl);
-      });
-      actionRow.appendChild(useTileBtn);
-
-      const seekBtn = document.createElement("button");
-      seekBtn.className = "btn btn-primary";
-      seekBtn.innerText = "Seek here & capture full-res";
-      seekBtn.addEventListener("click", async () => {
-        const dataUrl = await seekAndCaptureFrame(sprite.start);
-        if (!dataUrl) {
-          window.alert(
-            "Tag Image Grabber: couldn't seek/capture the video frame."
-          );
-          return;
-        }
-        showCropView(dataUrl);
-      });
-      actionRow.appendChild(seekBtn);
-
-      const backBtn = document.createElement("button");
-      backBtn.className = "btn btn-outline-light";
-      backBtn.innerText = "Back to thumbnails";
-      backBtn.addEventListener("click", showThumbnailView);
-      actionRow.appendChild(backBtn);
+    // Thumbnails always resolve to a full-resolution frame: the sprite tile
+    // itself is only used to browse/preview at a glance (it's capped at
+    // ~160px), then clicking it seeks the real player there and captures a
+    // proper frame - never the low-res tile itself.
+    async function selectSpriteTile(sprite) {
+      const dataUrl = await seekAndCaptureFrame(sprite.start);
+      if (!dataUrl) {
+        window.alert("Tag Image Grabber: couldn't seek/capture the video frame.");
+        return;
+      }
+      showCropView(dataUrl);
     }
 
     async function showThumbnailView() {
@@ -561,7 +564,7 @@
         tile.style.backgroundRepeat = "no-repeat";
         tile.style.cursor = "pointer";
         tile.title = `~${Math.round(sprite.start)}s`;
-        tile.addEventListener("click", () => showTileChoiceView(sprite));
+        tile.addEventListener("click", () => selectSpriteTile(sprite));
         grid.appendChild(tile);
       });
     }
@@ -572,12 +575,22 @@
       );
     }
 
+    // Highlights whichever source button produced what's currently on
+    // screen. Bootstrap's `.active` class inverts an outline button's
+    // colors, giving a clear "this one's selected" look.
+    function setActiveSource(key) {
+      coverSrcBtn.classList.toggle("active", key === "cover");
+      thumbsSrcBtn.classList.toggle("active", key === "thumbnails");
+      captureSrcBtn.classList.toggle("active", key === "capture");
+    }
+
     const coverSrcBtn = document.createElement("button");
     coverSrcBtn.className = "btn btn-outline-light btn-sm";
     coverSrcBtn.innerText = "Scene cover";
     coverSrcBtn.addEventListener("click", async () => {
       const domCover = findSourceImageUrl("scene");
       if (domCover) {
+        setActiveSource("cover");
         showCropView(domCover);
         return;
       }
@@ -599,6 +612,7 @@
         cachedPaths.screenshot &&
         (await checkRealSceneCover(cachedPaths.screenshot))
       ) {
+        setActiveSource("cover");
         showCropView(cachedPaths.screenshot);
       } else {
         window.alert(
@@ -611,18 +625,22 @@
     const thumbsSrcBtn = document.createElement("button");
     thumbsSrcBtn.className = "btn btn-outline-light btn-sm";
     thumbsSrcBtn.innerText = "Thumbnails";
-    thumbsSrcBtn.addEventListener("click", showThumbnailView);
+    thumbsSrcBtn.addEventListener("click", () => {
+      setActiveSource("thumbnails");
+      showThumbnailView();
+    });
     sourceRow.appendChild(thumbsSrcBtn);
 
     const captureSrcBtn = document.createElement("button");
     captureSrcBtn.className = "btn btn-outline-light btn-sm";
-    captureSrcBtn.innerText = "Capture current frame";
-    captureSrcBtn.addEventListener("click", () => {
-      const dataUrl = captureVideoFrame();
+    captureSrcBtn.innerText = "Current Frame";
+    captureSrcBtn.addEventListener("click", async () => {
+      const dataUrl = await captureVideoFrameAsync();
       if (!dataUrl) {
         showCaptureError();
         return;
       }
+      setActiveSource("capture");
       showCropView(dataUrl);
     });
     sourceRow.appendChild(captureSrcBtn);
@@ -631,11 +649,13 @@
     cancelBtn.className = "btn btn-danger";
     cancelBtn.innerText = "Cancel";
     cancelBtn.addEventListener("click", cleanup);
-    cancelRow.appendChild(cancelBtn);
+    bottomRow.appendChild(cancelBtn);
 
-    if (start.kind === "cover") {
+    if (start.kind === "cover" || start.kind === "capture") {
+      setActiveSource(start.kind);
       showCropView(start.coverUrl);
     } else {
+      setActiveSource("thumbnails");
       showThumbnailView();
     }
     modal.showModal();
@@ -644,11 +664,13 @@
   function GrabTagImageButton(props) {
     const { tag, pageContext } = props;
     const [busy, setBusy] = React.useState(false);
+    const apolloClient = Apollo.useApolloClient();
 
     const onImageReady = async (imageValue) => {
       setBusy(true);
       try {
         await saveTagImage(tag.id, imageValue);
+        await refreshTagImageInCache(apolloClient, tag.id);
       } catch (err) {
         window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
       } finally {
