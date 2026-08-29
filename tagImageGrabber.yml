@@ -1,0 +1,12 @@
+name: Tag Image Grabber
+# requires: CommunityScriptsUILibrary
+description: Grab an image for a tag from an already-tagged image or a scene's cover, right from the tag chip
+version: 0.1
+ui:
+  requires:
+    - CommunityScriptsUILibrary
+  css:
+    - https://cdn.jsdelivr.net/npm/cropperjs@1.6.1/dist/cropper.min.css
+  javascript:
+    - https://cdn.jsdelivr.net/npm/cropperjs@1.6.1/dist/cropper.min.js
+    - tagImageGrabber.js
