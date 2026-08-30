@@ -1139,17 +1139,41 @@
     return ReactDOM.createPortal(button, target);
   }
 
-  function HoverCardImageButton({ tag }) {
+  function useTagImagePicker(tag) {
     const apolloClient = Apollo.useApolloClient();
 
-    const onImageReady = async (imageValue) => {
-      try {
-        const updatedTag = await saveTagImage(tag.id, imageValue);
-        refreshTagImageInCache(apolloClient, updatedTag);
-      } catch (err) {
-        window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
-      }
+    return () => {
+      openLinkedContentPicker(tag, async (imageValue) => {
+        try {
+          const updatedTag = await saveTagImage(tag.id, imageValue);
+          refreshTagImageInCache(apolloClient, updatedTag);
+        } catch (err) {
+          window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
+        }
+      });
     };
+  }
+
+  function HoverCardClickableImage({ tag, children }) {
+    const openPicker = useTagImagePicker(tag);
+
+    return React.createElement(
+      "span",
+      {
+        className: "tag-image-grabber-clickable-image",
+        onClick: (event) => {
+          if (!event.currentTarget.closest(".tag-popover-card")) return;
+          event.preventDefault();
+          event.stopPropagation();
+          openPicker();
+        },
+      },
+      children
+    );
+  }
+
+  function HoverCardImageButton({ tag }) {
+    const openPicker = useTagImagePicker(tag);
 
     return React.createElement(
       "button",
@@ -1162,7 +1186,7 @@
         onClick: (event) => {
           event.preventDefault();
           event.stopPropagation();
-          openLinkedContentPicker(tag, onImageReady);
+          openPicker();
         },
       },
       React.createElement(Icon, { icon: faImage })
@@ -1170,6 +1194,21 @@
   }
 
   function setupTagImageGrabber() {
+    PluginApi.patch.instead("TagCard.Image", function (
+      props,
+      _,
+      originalComponent
+    ) {
+      const image = originalComponent(props);
+      if (!props.tag || !props.tag.id) return image;
+
+      return React.createElement(
+        HoverCardClickableImage,
+        { tag: props.tag },
+        image
+      );
+    });
+
     PluginApi.patch.instead("TagCard.Overlays", function (
       props,
       _,

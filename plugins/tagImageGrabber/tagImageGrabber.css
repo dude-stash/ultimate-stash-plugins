@@ -19,3 +19,11 @@
 .tag-popover-card .tag-card .thumbnail-section {
   position: relative;
 }
+
+.tag-image-grabber-clickable-image {
+  display: block;
+}
+
+.tag-popover-card .tag-image-grabber-clickable-image {
+  cursor: pointer;
+}
