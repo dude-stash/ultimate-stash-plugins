@@ -1172,7 +1172,7 @@
     );
   }
 
-  function HoverCardImageButton({ tag }) {
+  function TagCardImageButton({ tag }) {
     const openPicker = useTagImagePicker(tag);
 
     return React.createElement(
@@ -1220,7 +1220,7 @@
         originalComponent(props),
         props.tag &&
           props.tag.id &&
-          React.createElement(HoverCardImageButton, { tag: props.tag })
+          React.createElement(TagCardImageButton, { tag: props.tag })
       );
     });
 

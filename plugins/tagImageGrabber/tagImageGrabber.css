@@ -12,11 +12,33 @@
   z-index: 2;
 }
 
-.tag-popover-card .tag-image-grabber-card-action {
+.tag-popover-card .tag-image-grabber-card-action,
+.tag-list .tag-card .tag-image-grabber-card-action {
   display: inline-flex;
 }
 
-.tag-popover-card .tag-card .thumbnail-section {
+.tag-list .tag-card .tag-image-grabber-card-action {
+  font-size: 1rem;
+  height: 1.75rem;
+  opacity: 0;
+  right: 0.3rem;
+  transition: opacity 0.5s;
+  width: 1.75rem;
+}
+
+.tag-list .tag-card:hover .tag-image-grabber-card-action,
+.tag-list .tag-card:focus-within .tag-image-grabber-card-action {
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .tag-list .tag-card .tag-image-grabber-card-action {
+    opacity: 1;
+  }
+}
+
+.tag-popover-card .tag-card .thumbnail-section,
+.tag-list .tag-card .thumbnail-section {
   position: relative;
 }
 
