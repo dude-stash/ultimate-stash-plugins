@@ -1,24 +1,53 @@
-# Template for creating Stash plugins source index
+# Ultimate Stash Plugins
 
-This template allows you to create a new repository with a few clicks with preconfigured GitHub action to publish your plugins source index. 
-_This assumes you already know how to create plugins for Stash. If you don't, first read [this](https://docs.stashapp.cc/in-app-manual/plugins/#creating-plugins)._
+Plugins for extending [Stash](https://github.com/stashapp/stash), the
+open-source media organizer.
 
-## How to use it?
+## Installation
 
-1. Click **Use this template** > **Create a new repository**. 
-1. Choose a repository name and click **Create repository**.
-1. Open **Settings** and head to **Pages**.
-1. Under Build and deployment select the Source as GitHub Actions.
+Add this repository as a plugin source in Stash:
 
-Now add your plugins to [plugins](/plugins) directory and they will be automatically published to the source index.
+1. Go to **Settings → Plugins → Available Plugins**.
+2. Click **Add Source**.
+3. Enter
+   `https://dude-stash.github.io/ultimate-stash-plugins/main/index.yml`.
+4. Click **Reload**.
+5. Browse and install the available plugins individually.
 
-Source index URL: [`https://<your-username>.github.io/<repository-name>/main/index.yml`](https://<your-username>.github.io/<repository-name>/main/index.yml)
+## Available Plugins
 
-## Share your plugins
+### Tag Image Grabber (v0.8)
 
-- [Create a new topic](https://discourse.stashapp.cc/t/-/33) for your plugin on the community forum.
-- [Add your source index to the list](https://discourse.stashapp.cc/t/-/122) on the Stash community forum.
+Choose a tag image from linked images, scenes, or performers.
+
+**Features:**
+
+- Browse image candidates associated with a tag.
+- Crop images with aspect-ratio controls.
+- Capture and crop frames from linked scenes.
+- Select images from linked performers.
+
+**Requirement:** The
+[CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary)
+plugin must be available from the official CommunityScripts source.
+
+### Scene Edit First Tab (v1.0.0)
+
+Replace the read-only Details tab on scene pages with the edit form.
+
+**Features:**
+
+- Makes the edit form the first and default scene tab.
+- Labels the promoted edit tab as Details.
+- Redirects the scene-page `a` keyboard shortcut to the edit form.
+- Preserves the remaining scene tabs in their existing order.
+
+## Support
+
+- **Issues:** [GitHub Issues](https://github.com/dude-stash/ultimate-stash-plugins/issues)
+- **Community:** [Stash Discord](https://discord.gg/stashapp) |
+  [Stash Discourse](https://discourse.stashapp.cc/)
 
 ## License
 
-The default license is set to [AGPL-3.0](/LICENCE). Before publishing any plugins you can change it.
+[AGPL-3.0](LICENCE)
