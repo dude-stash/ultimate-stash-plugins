@@ -1036,7 +1036,7 @@
     return captureVideoElement(video);
   }
 
-  function openLinkedSceneModal(scene, onImageReady) {
+  function openLinkedSceneModal(scene, onImageReady, onBack, onCancel) {
     const modal = document.createElement("dialog");
     modal.className = "tag-image-grabber-modal bg-dark text-white";
     modal.style.width = "90%";
@@ -1110,11 +1110,26 @@
     }
 
     function addCancelButton() {
+      if (onBack) {
+        const back = document.createElement("button");
+        back.type = "button";
+        back.className = "btn btn-secondary";
+        back.innerText = "Back to Scenes";
+        back.addEventListener("click", () => {
+          cleanup();
+          onBack();
+        });
+        actionRow.appendChild(back);
+      }
+
       const cancel = document.createElement("button");
       cancel.type = "button";
       cancel.className = "btn btn-danger";
       cancel.innerText = "Cancel";
-      cancel.addEventListener("click", cleanup);
+      cancel.addEventListener("click", () => {
+        cleanup();
+        if (onCancel) onCancel();
+      });
       actionRow.appendChild(cancel);
     }
 
@@ -1271,6 +1286,7 @@
     modal.addEventListener("cancel", (event) => {
       event.preventDefault();
       cleanup();
+      if (onCancel) onCancel();
     });
     modal.showModal();
     const initialCoverToken = viewToken + 1;
@@ -1327,7 +1343,7 @@
     footer.style.gap = "8px";
     modal.appendChild(footer);
 
-    let sourceType = "images";
+    let sourceType = "scenes";
     let page = 1;
     let requestToken = 0;
     let cleanedUp = false;
@@ -1345,11 +1361,24 @@
     }
 
     function selectSource(source) {
-      cleanup();
       if (sourceType === "scenes") {
-        openLinkedSceneModal(source, onImageReady);
+        modal.close();
+        openLinkedSceneModal(
+          source,
+          (imageValue) => {
+            cleanup();
+            onImageReady(imageValue);
+          },
+          () => {
+            if (cleanedUp) return;
+            modal.showModal();
+            search.focus();
+          },
+          cleanup
+        );
         return;
       }
+      cleanup();
       const srcUrl =
         sourceType === "images" ? source.paths.image : source.image_path;
       openCropDialog(srcUrl, onImageReady);
