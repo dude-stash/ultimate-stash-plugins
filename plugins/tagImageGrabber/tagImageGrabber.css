@@ -49,3 +49,38 @@
 .tag-popover-card .tag-image-grabber-clickable-image {
   cursor: pointer;
 }
+
+#tag-page .detail-header-image {
+  position: relative;
+}
+
+#tag-page .tag-image-grabber-page-image {
+  cursor: pointer;
+}
+
+.tag-image-grabber-page-action {
+  align-items: center;
+  border-radius: 100%;
+  bottom: 0.5rem;
+  display: inline-flex;
+  height: 2rem;
+  justify-content: center;
+  opacity: 0;
+  padding: 0;
+  position: absolute;
+  right: 0.5rem;
+  transition: opacity 0.2s;
+  width: 2rem;
+  z-index: 2;
+}
+
+#tag-page .detail-header-image:hover .tag-image-grabber-page-action,
+#tag-page .detail-header-image:focus-within .tag-image-grabber-page-action {
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .tag-image-grabber-page-action {
+    opacity: 1;
+  }
+}

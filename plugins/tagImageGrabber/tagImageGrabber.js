@@ -1094,50 +1094,104 @@
     loadSources();
   }
 
-  function TagPagePickerButton({ tag }) {
-    const [target, setTarget] = React.useState(null);
+  function TagPagePickerActions({ tag }) {
+    const [buttonTarget, setButtonTarget] = React.useState(null);
+    const [imageTarget, setImageTarget] = React.useState(null);
     const [busy, setBusy] = React.useState(false);
     const apolloClient = Apollo.useApolloClient();
 
     React.useEffect(() => {
-      function updateTarget() {
-        const next = document.querySelector("#tag-page .tag-head .details-edit");
-        setTarget(next && !next.querySelector(".save") ? next : null);
+      function updateTargets() {
+        const nextButtonTarget = document.querySelector(
+          "#tag-page .tag-head .details-edit"
+        );
+        const isEditing = nextButtonTarget?.querySelector(".save");
+        setButtonTarget(isEditing ? null : nextButtonTarget);
+        setImageTarget(
+          isEditing
+            ? null
+            : document.querySelector("#tag-page .detail-header-image img")
+        );
       }
-      updateTarget();
-      const observer = new MutationObserver(updateTarget);
+      updateTargets();
+      const observer = new MutationObserver(updateTargets);
       const page = document.querySelector("#tag-page");
       if (page) observer.observe(page, { childList: true, subtree: true });
       return () => observer.disconnect();
     }, []);
 
-    if (!target) return null;
-    const button = React.createElement(
+    const openPicker = React.useCallback(() => {
+      openLinkedContentPicker(tag, async (imageValue) => {
+        setBusy(true);
+        try {
+          const updatedTag = await saveTagImage(tag.id, imageValue);
+          refreshTagImageInCache(apolloClient, updatedTag);
+        } catch (err) {
+          window.alert(
+            `Tag Image Grabber: failed to save tag image (${err})`
+          );
+        } finally {
+          setBusy(false);
+        }
+      });
+    }, [apolloClient, tag]);
+
+    React.useEffect(() => {
+      if (!imageTarget) return undefined;
+
+      function handleImageClick(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        openPicker();
+      }
+
+      imageTarget.classList.add("tag-image-grabber-page-image");
+      imageTarget.addEventListener("click", handleImageClick);
+      return () => {
+        imageTarget.classList.remove("tag-image-grabber-page-image");
+        imageTarget.removeEventListener("click", handleImageClick);
+      };
+    }, [imageTarget, openPicker]);
+
+    const pickerButton = React.createElement(
       "button",
       {
         type: "button",
         className: "btn btn-secondary",
         disabled: busy,
         title: "Choose this tag's image from linked content",
-        onClick: () => {
-          openLinkedContentPicker(tag, async (imageValue) => {
-            setBusy(true);
-            try {
-              const updatedTag = await saveTagImage(tag.id, imageValue);
-              refreshTagImageInCache(apolloClient, updatedTag);
-            } catch (err) {
-              window.alert(
-                `Tag Image Grabber: failed to save tag image (${err})`
-              );
-            } finally {
-              setBusy(false);
-            }
-          });
-        },
+        onClick: openPicker,
       },
       busy ? "Saving…" : "Set Image..."
     );
-    return ReactDOM.createPortal(button, target);
+    const imageButton = React.createElement(
+      "button",
+      {
+        type: "button",
+        className:
+          "tag-image-grabber-page-action btn btn-secondary btn-sm",
+        disabled: busy,
+        title: "Choose this tag's image from linked content",
+        "aria-label": `Choose an image for ${tag.name}`,
+        onClick: (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openPicker();
+        },
+      },
+      React.createElement(Icon, { icon: faImage })
+    );
+
+    return React.createElement(
+      React.Fragment,
+      null,
+      buttonTarget && ReactDOM.createPortal(pickerButton, buttonTarget),
+      imageTarget &&
+        ReactDOM.createPortal(
+          imageButton,
+          imageTarget.closest(".detail-header-image")
+        )
+    );
   }
 
   function useTagImagePicker(tag) {
@@ -1374,7 +1428,7 @@
         React.Fragment,
         null,
         originalComponent(props),
-        React.createElement(TagPagePickerButton, { tag: props.tag })
+        React.createElement(TagPagePickerActions, { tag: props.tag })
       );
     });
   }
