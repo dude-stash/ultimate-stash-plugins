@@ -1,21 +1,8 @@
 // Tag Image Grabber
 //
-// Adds a small action button next to tag chips on Image and Scene detail
-// pages that lets you grab an image and use it as that tag's image (with an
-// optional crop step), instead of having to manually download/upload/crop
-// it yourself.
-//
-// Current scope (see plan): Image page tag chips (use the full-res displayed
-// image). Scene page tag chips open a picker with three sources - the
-// scene's existing cover, a clickable grid built from the sprite/VTT
-// thumbnail sheet (which seeks and captures a full-res frame), or a live
-// capture of whatever frame the video
-// is currently paused on. Deliberately not using scene marker screenshots as
-// a source - a marker's screenshot isn't necessarily the best representative
-// frame for a tag, so this only ever offers full manual control over which
-// frame gets used. Performer detail pages and a reverse picker from a Tag's
-// linked images, scenes, and performers are also supported. The player-toolbar
-// entry point for tags not yet on the scene remains deferred.
+// Adds an action to tag hover cards and tag pages that lets users choose a tag
+// image from linked images, scenes, or performers, with crop and video-frame
+// capture tools.
 (function () {
   "use strict";
 
@@ -23,6 +10,8 @@
   const React = PluginApi.React;
   const ReactDOM = PluginApi.ReactDOM;
   const Apollo = PluginApi.libraries.Apollo;
+  const Icon = PluginApi.components.Icon;
+  const { faImage } = PluginApi.libraries.FontAwesomeSolid;
   const baseURL =
     document.querySelector("base")?.getAttribute("href") || "/";
   const normalizedBaseURL = baseURL.endsWith("/") ? baseURL : `${baseURL}/`;
@@ -101,55 +90,6 @@
     } catch (err) {
       // best-effort - a stale hover preview isn't worth failing the save over
     }
-  }
-
-  // Determines what kind of detail page we're currently on, purely from the
-  // URL - not from the TagLink's own `linkType` prop. `linkType` isn't a
-  // reliable signal: many callers (SceneDetailPanel, SceneCard, the
-  // duplicate checker, the tagger dialog, tag hierarchy chips on the Tag
-  // page) omit it and rely on TagLink's own internal default ("scene"),
-  // which we can't see from a patch - the default is applied by TagLink's
-  // own destructuring, *after* our patch already received the raw props.
-  // Keying off the URL instead means the button only ever appears where the
-  // corresponding source image element genuinely exists.
-  function getPageContext() {
-    const path = getAppPath();
-    if (/^\/scenes\/\d+(?:\/|$)/.test(path)) return "scene";
-    if (/^\/images\/\d+(?:\/|$)/.test(path)) return "image";
-    if (/^\/performers\/\d+(?:\/|$)/.test(path)) return "performer";
-    return null;
-  }
-
-  function getAppPath() {
-    const basePath = new URL(baseURL, window.location.origin).pathname.replace(
-      /\/$/,
-      ""
-    );
-    const path = window.location.pathname;
-    return (
-      basePath &&
-      (path === basePath || path.startsWith(`${basePath}/`))
-    )
-      ? path.slice(basePath.length) || "/"
-      : path;
-  }
-
-  // Reuses the already-loaded <img> element rather than re-fetching, same
-  // approach as the sceneCoverCropper plugin.
-  function findSourceImageUrl(pageContext) {
-    if (pageContext === "image") {
-      const el = document.querySelector("img.image-image");
-      return el ? el.src : null;
-    }
-    if (pageContext === "scene") {
-      const el = document.querySelector("img.scene-cover");
-      return el ? el.src : null;
-    }
-    if (pageContext === "performer") {
-      const el = document.querySelector("#performer-page img.performer");
-      return el ? el.src : null;
-    }
-    return null;
   }
 
   // Cropper.js ships no icons of its own (it's a pure image-manipulation
@@ -492,27 +432,6 @@
     modal.showModal();
   }
 
-  // --- Video/sprite sourcing for the Scene-page picker (Phase 3) ---
-
-  function findVideoElement() {
-    return (
-      document.querySelector("#VideoJsPlayer_html5_api") ||
-      document.querySelector(".video-js video")
-    );
-  }
-
-  // Draws the current frame of the scene's <video> element into an
-  // off-screen canvas at the video's native resolution.
-  function captureVideoFrame() {
-    const video = findVideoElement();
-    if (!video || !video.videoWidth) return null;
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.92);
-  }
-
   // Resolves once `video` fires `eventName`, or after `timeoutMs` regardless
   // (some browsers/streams don't reliably fire seeked/loadeddata/canplay in
   // every situation, so this never hangs forever).
@@ -528,75 +447,6 @@
       video.addEventListener(eventName, finish);
       setTimeout(finish, timeoutMs);
     });
-  }
-
-  // Same as captureVideoFrame, but first gives the video a brief grace
-  // period to have decoded frame data if it doesn't yet. Needed because
-  // picking a thumbnail seeks the real player (video.currentTime = ...),
-  // which can leave the element in a transient buffering/stalled state
-  // (videoWidth/readyState momentarily 0) right after - capturing
-  // immediately in that window would otherwise fail even though the video
-  // is fine a moment later.
-  async function captureVideoFrameAsync(timeoutMs) {
-    const video = findVideoElement();
-    if (!video) return null;
-    if (video.readyState >= 2 && video.videoWidth) {
-      return captureVideoFrame();
-    }
-    await Promise.race([
-      waitForVideoEvent(video, "loadeddata", timeoutMs || 1500),
-      waitForVideoEvent(video, "canplay", timeoutMs || 1500),
-    ]);
-    return captureVideoFrame();
-  }
-
-  // Seeks the scene's <video> element to `targetSeconds`, captures a full-res
-  // frame once the seek settles (or after a 2s safety timeout, in case
-  // 'seeked' never fires), then seeks back to wherever the viewer actually
-  // was. Picking a thumbnail to grab an image for a tag shouldn't leave
-  // their actual playback position changed - the seek is only a means to
-  // get a decoded frame at that timestamp, not something they asked for.
-  async function seekAndCaptureFrame(targetSeconds) {
-    const video = findVideoElement();
-    if (!video) return null;
-
-    const originalTime = video.currentTime;
-    const wasPaused = video.paused;
-    if (!wasPaused) video.pause();
-    try {
-      video.currentTime = targetSeconds;
-    } catch (err) {
-      return null;
-    }
-    await waitForVideoEvent(video, "seeked", 2000);
-    const dataUrl = captureVideoFrame();
-
-    try {
-      video.currentTime = originalTime;
-    } catch (err) {
-      // best effort - worth keeping the captured frame either way
-    }
-    await waitForVideoEvent(video, "seeked", 1500);
-    if (!wasPaused) {
-      try {
-        await video.play();
-      } catch (err) {
-        // Browser playback policies may prevent restoring playback.
-      }
-    }
-
-    return dataUrl;
-  }
-
-  function getSceneIdFromUrl() {
-    const m = getAppPath().match(/^\/scenes\/(\d+)/);
-    return m ? m[1] : null;
-  }
-
-  async function fetchScenePaths(sceneId) {
-    const query = `query TagImageGrabberFindScene($id: ID) { findScene(id: $id) { id paths { screenshot vtt sprite } } }`;
-    const data = await callGQL(query, { id: sceneId });
-    return data && data.findScene ? data.findScene.paths : null;
   }
 
   // Scene.paths.screenshot (and vtt/sprite) are always non-empty URL strings
@@ -670,317 +520,7 @@
     return sprites;
   }
 
-  // Determines what to open the Scene picker modal on, in order: the
-  // already-rendered <img class="scene-cover"> DOM element (only present
-  // once the Edit tab has been visited - the Details tab, which is where
-  // the tag chips actually live, doesn't render it); else the scene's cover
-  // via GraphQL, verified to be a real image and not the server's
-  // placeholder-SVG fallback; else the sprite/VTT thumbnail grid, if
-  // generated; else a live capture of whatever frame the video is currently
-  // on. Returns { kind: "cover", coverUrl, paths } | { kind: "thumbnails",
-  // paths } | { kind: "capture", coverUrl, paths } | { kind: "none" }.
-  async function resolveSceneImageStart() {
-    const domCover = findSourceImageUrl("scene");
-    if (domCover) return { kind: "cover", coverUrl: domCover, paths: null };
-
-    const sceneId = getSceneIdFromUrl();
-    let paths = null;
-    if (sceneId) {
-      try {
-        paths = await fetchScenePaths(sceneId);
-      } catch (err) {
-        paths = null;
-      }
-    }
-
-    if (paths && paths.screenshot && (await checkRealSceneCover(paths.screenshot))) {
-      return { kind: "cover", coverUrl: paths.screenshot, paths };
-    }
-
-    if (paths && paths.vtt) {
-      return { kind: "thumbnails", paths };
-    }
-
-    const captured = await captureVideoFrameAsync();
-    if (captured) {
-      return { kind: "capture", coverUrl: captured, paths };
-    }
-
-    return { kind: "none" };
-  }
-
-  // Entry point for the Scene tag-chip action: one persistent modal that
-  // opens straight into the crop view on the scene's existing cover (same
-  // as before), with source buttons that let the user swap what's being
-  // cropped - a sprite/VTT thumbnail, or a live-captured video frame -
-  // without closing and reopening a separate picker first.
-  function openSceneTagImageModal(start, onImageReady) {
-    const modal = document.createElement("dialog");
-    modal.className = "tag-image-grabber-modal bg-dark";
-    modal.style.width = "90%";
-    modal.style.maxWidth = "700px";
-    modal.style.border = "none";
-    modal.style.padding = "1rem";
-    modal.setAttribute("aria-label", "Choose a scene image for this tag");
-    document.body.appendChild(modal);
-
-    const sourceRow = document.createElement("div");
-    sourceRow.className =
-      "d-flex flex-row justify-content-center align-items-center mb-2";
-    sourceRow.style.gap = "8px";
-    modal.appendChild(sourceRow);
-
-    const contentArea = document.createElement("div");
-    contentArea.style.width = "100%";
-    modal.appendChild(contentArea);
-
-    // One flex row holds both the view-specific action buttons (Save, etc.
-    // - cleared/rebuilt on every view switch) and the persistent Cancel
-    // button, so they always render side by side. actionRow uses
-    // `display: contents` so clearing its innerHTML doesn't disturb Cancel,
-    // which lives as its sibling in the same flex row rather than inside it.
-    const bottomRow = document.createElement("div");
-    bottomRow.className =
-      "d-flex flex-row justify-content-center align-items-center mt-2";
-    bottomRow.style.gap = "10px";
-    modal.appendChild(bottomRow);
-
-    const actionRow = document.createElement("div");
-    actionRow.style.display = "contents";
-    bottomRow.appendChild(actionRow);
-
-    // Tracks the active buildCropUI() instance so it can be torn down on
-    // cleanup/view-switch, same role the old bare `cropper` variable played.
-    let activeCropUI = null;
-    // Bumped on every view switch so a still-in-flight async load (e.g.
-    // fetching the sprite vtt) can tell it's stale and not repaint over
-    // whatever view the user has since switched to.
-    let viewToken = 0;
-    // Cached findScene GraphQL result, shared across the cover-recheck and
-    // thumbnails views so switching between them doesn't refetch every time.
-    let cachedPaths = start.paths || null;
-
-    let cleanedUp = false;
-    function cleanup() {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      viewToken++;
-      if (activeCropUI) activeCropUI.destroy();
-      if (modal.open) modal.close();
-      modal.remove();
-    }
-
-    function resetContent() {
-      viewToken++;
-      if (activeCropUI) {
-        activeCropUI.destroy();
-        activeCropUI = null;
-      }
-      contentArea.innerHTML = "";
-      actionRow.innerHTML = "";
-      return viewToken;
-    }
-
-    function showCropView(srcUrl) {
-      resetContent();
-      activeCropUI = buildCropUI(contentArea, actionRow, srcUrl, (value) => {
-        cleanup();
-        onImageReady(value);
-      });
-    }
-
-    // Thumbnails always resolve to a full-resolution frame: the sprite tile
-    // itself is only used to browse/preview at a glance (it's capped at
-    // ~160px), then clicking it seeks the real player there and captures a
-    // proper frame - never the low-res tile itself.
-    async function selectSpriteTile(sprite) {
-      const token = ++viewToken;
-      const dataUrl = await seekAndCaptureFrame(sprite.start);
-      if (token !== viewToken || cleanedUp) return;
-      if (!dataUrl) {
-        window.alert("Tag Image Grabber: couldn't seek/capture the video frame.");
-        return;
-      }
-      showCropView(dataUrl);
-    }
-
-    async function showThumbnailView() {
-      const token = resetContent();
-
-      const status = document.createElement("p");
-      status.className = "text-white text-center";
-      status.innerText = "Loading thumbnails...";
-      contentArea.appendChild(status);
-
-      const sceneId = getSceneIdFromUrl();
-      if (!sceneId) {
-        status.innerText = "Couldn't determine the current scene.";
-        return;
-      }
-
-      if (!cachedPaths) {
-        try {
-          cachedPaths = await fetchScenePaths(sceneId);
-        } catch (err) {
-          cachedPaths = null;
-        }
-      }
-      if (token !== viewToken) return;
-      const paths = cachedPaths;
-      if (!paths || !paths.vtt) {
-        status.innerText =
-          "No sprite/vtt generated yet for this scene. Run Generate with sprites enabled first.";
-        return;
-      }
-
-      let sprites;
-      try {
-        const res = await fetch(paths.vtt);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const text = await res.text();
-        sprites = parseSpriteVtt(text, paths.vtt);
-      } catch (err) {
-        if (token !== viewToken) return;
-        status.innerText = `Failed to load thumbnails (${err}).`;
-        return;
-      }
-      if (token !== viewToken) return;
-
-      if (!sprites.length) {
-        status.innerText =
-          "No thumbnails found (sprite may not be generated yet).";
-        return;
-      }
-
-      status.remove();
-      const grid = document.createElement("div");
-      grid.style.display = "flex";
-      grid.style.flexWrap = "wrap";
-      grid.style.gap = "4px";
-      grid.style.maxHeight = "50vh";
-      grid.style.overflowY = "auto";
-      contentArea.appendChild(grid);
-
-      sprites.forEach((sprite) => {
-        const tile = document.createElement("div");
-        tile.style.width = `${sprite.w}px`;
-        tile.style.height = `${sprite.h}px`;
-        tile.style.backgroundImage = `url(${sprite.url})`;
-        tile.style.backgroundPosition = `-${sprite.x}px -${sprite.y}px`;
-        tile.style.backgroundRepeat = "no-repeat";
-        tile.style.cursor = "pointer";
-        tile.title = `~${Math.round(sprite.start)}s`;
-        tile.addEventListener("click", () => selectSpriteTile(sprite));
-        grid.appendChild(tile);
-      });
-    }
-
-    function showCaptureError() {
-      window.alert(
-        "Tag Image Grabber: couldn't find the scene's video element to capture from."
-      );
-    }
-
-    // Highlights whichever source button produced what's currently on
-    // screen. Bootstrap's `.active` class inverts an outline button's
-    // colors, giving a clear "this one's selected" look.
-    function setActiveSource(key) {
-      coverSrcBtn.classList.toggle("active", key === "cover");
-      thumbsSrcBtn.classList.toggle("active", key === "thumbnails");
-      captureSrcBtn.classList.toggle("active", key === "capture");
-    }
-
-    const coverSrcBtn = document.createElement("button");
-    coverSrcBtn.type = "button";
-    coverSrcBtn.className = "btn btn-outline-light btn-sm";
-    coverSrcBtn.innerText = "Scene cover";
-    coverSrcBtn.addEventListener("click", async () => {
-      const token = ++viewToken;
-      const domCover = findSourceImageUrl("scene");
-      if (domCover) {
-        if (token !== viewToken) return;
-        setActiveSource("cover");
-        showCropView(domCover);
-        return;
-      }
-
-      const sceneId = getSceneIdFromUrl();
-      if (!sceneId) {
-        window.alert("Tag Image Grabber: couldn't determine the current scene.");
-        return;
-      }
-      if (!cachedPaths) {
-        try {
-          cachedPaths = await fetchScenePaths(sceneId);
-        } catch (err) {
-          cachedPaths = null;
-        }
-      }
-      if (token !== viewToken || cleanedUp) return;
-      if (
-        cachedPaths &&
-        cachedPaths.screenshot &&
-        (await checkRealSceneCover(cachedPaths.screenshot))
-      ) {
-        setActiveSource("cover");
-        showCropView(cachedPaths.screenshot);
-      } else {
-        window.alert(
-          "Tag Image Grabber: this scene has no cover image generated yet."
-        );
-      }
-    });
-    sourceRow.appendChild(coverSrcBtn);
-
-    const thumbsSrcBtn = document.createElement("button");
-    thumbsSrcBtn.type = "button";
-    thumbsSrcBtn.className = "btn btn-outline-light btn-sm";
-    thumbsSrcBtn.innerText = "Thumbnails";
-    thumbsSrcBtn.addEventListener("click", () => {
-      setActiveSource("thumbnails");
-      showThumbnailView();
-    });
-    sourceRow.appendChild(thumbsSrcBtn);
-
-    const captureSrcBtn = document.createElement("button");
-    captureSrcBtn.type = "button";
-    captureSrcBtn.className = "btn btn-outline-light btn-sm";
-    captureSrcBtn.innerText = "Current Frame";
-    captureSrcBtn.addEventListener("click", async () => {
-      const token = ++viewToken;
-      const dataUrl = await captureVideoFrameAsync();
-      if (token !== viewToken || cleanedUp) return;
-      if (!dataUrl) {
-        showCaptureError();
-        return;
-      }
-      setActiveSource("capture");
-      showCropView(dataUrl);
-    });
-    sourceRow.appendChild(captureSrcBtn);
-
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "btn btn-danger";
-    cancelBtn.innerText = "Cancel";
-    cancelBtn.addEventListener("click", cleanup);
-    bottomRow.appendChild(cancelBtn);
-
-    if (start.kind === "cover" || start.kind === "capture") {
-      setActiveSource(start.kind);
-      showCropView(start.coverUrl);
-    } else {
-      setActiveSource("thumbnails");
-      showThumbnailView();
-    }
-    modal.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      cleanup();
-    });
-    modal.showModal();
-  }
-
-  // --- Reverse picker from a Tag page (Phase 4) ---
+  // --- Picker for a tag's linked content ---
 
   const LINKED_SOURCE_QUERIES = {
     images: `query TagImageGrabberLinkedImages($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
@@ -1599,131 +1139,49 @@
     return ReactDOM.createPortal(button, target);
   }
 
-  function GrabTagImageButton(props) {
-    const { tag, pageContext, linkType } = props;
-    const [busy, setBusy] = React.useState(false);
-    const [isDetailChip, setIsDetailChip] = React.useState(false);
-    const wrapperRef = React.useRef(null);
+  function HoverCardImageButton({ tag }) {
     const apolloClient = Apollo.useApolloClient();
 
-    React.useEffect(() => {
-      const wrapper = wrapperRef.current;
-      if (!wrapper) return;
-      const expectedType =
-        pageContext === "scene" ? "scene" : pageContext;
-      const typeMatches = (linkType || "scene") === expectedType;
-      const excluded = wrapper.closest(
-        ".card, .popover, .modal, dialog, [role='dialog']"
-      );
-      setIsDetailChip(typeMatches && !excluded);
-    }, [linkType, pageContext]);
-
     const onImageReady = async (imageValue) => {
-      setBusy(true);
       try {
         const updatedTag = await saveTagImage(tag.id, imageValue);
         refreshTagImageInCache(apolloClient, updatedTag);
       } catch (err) {
         window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    const onClick = async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (pageContext === "image") {
-        const srcUrl = findSourceImageUrl("image");
-        if (!srcUrl) {
-          window.alert(
-            "Tag Image Grabber: couldn't find a source image on this page."
-          );
-          return;
-        }
-        openCropDialog(srcUrl, onImageReady);
-        return;
-      }
-
-      if (pageContext === "performer") {
-        const srcUrl = findSourceImageUrl("performer");
-        if (!srcUrl || srcUrl.includes("?default=true")) {
-          window.alert(
-            "Tag Image Grabber: this performer has no image to use."
-          );
-          return;
-        }
-        openCropDialog(srcUrl, onImageReady);
-        return;
-      }
-
-      if (pageContext === "scene") {
-        setBusy(true);
-        let start;
-        try {
-          start = await resolveSceneImageStart();
-        } catch (err) {
-          window.alert(
-            `Tag Image Grabber: failed to resolve scene sources (${err})`
-          );
-          return;
-        } finally {
-          setBusy(false);
-        }
-        if (start.kind === "none") {
-          window.alert(
-            "Tag Image Grabber: no image source available for this scene (no cover, no thumbnails generated, and couldn't read the video player)."
-          );
-          return;
-        }
-        openSceneTagImageModal(start, onImageReady);
       }
     };
 
     return React.createElement(
-      "span",
+      "button",
       {
-        ref: wrapperRef,
-        style: { display: isDetailChip ? "inline" : "none" },
-      },
-      React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "tag-image-grabber-btn btn btn-secondary btn-sm",
-          title:
-            pageContext === "image"
-              ? "Use this image for this tag"
-              : pageContext === "performer"
-                ? "Use this performer's image for this tag"
-                : "Grab an image for this tag from this scene",
-          "aria-label": "Choose this source as the tag image",
-          style: { marginLeft: "4px", padding: "0 4px", lineHeight: "1.4" },
-          disabled: busy,
-          onClick,
+        type: "button",
+        className:
+          "tag-image-grabber-card-action btn btn-secondary btn-sm",
+        title: "Choose this tag's image from linked content",
+        "aria-label": `Choose an image for ${tag.name}`,
+        onClick: (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          openLinkedContentPicker(tag, onImageReady);
         },
-        busy ? "…" : "📷"
-      )
+      },
+      React.createElement(Icon, { icon: faImage })
     );
   }
 
   function setupTagImageGrabber() {
-    PluginApi.patch.instead("TagLink", function (props, _, originalComponent) {
-      const original = originalComponent(props);
-      const pageContext = getPageContext();
-      if (!pageContext || !props.tag || !props.tag.id) {
-        return original;
-      }
+    PluginApi.patch.instead("TagCard.Overlays", function (
+      props,
+      _,
+      originalComponent
+    ) {
       return React.createElement(
         React.Fragment,
         null,
-        original,
-        React.createElement(GrabTagImageButton, {
-          tag: props.tag,
-          pageContext: pageContext,
-          linkType: props.linkType,
-        })
+        originalComponent(props),
+        props.tag &&
+          props.tag.id &&
+          React.createElement(HoverCardImageButton, { tag: props.tag })
       );
     });
 

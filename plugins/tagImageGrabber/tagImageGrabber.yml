@@ -1,12 +1,10 @@
 name: Tag Image Grabber
-# requires: CommunityScriptsUILibrary
 description: Choose a tag image from linked images, scenes, or performers, with crop and video-frame capture tools
-version: 0.8
+version: 0.9
 ui:
-  requires:
-    - CommunityScriptsUILibrary
   css:
     - https://cdn.jsdelivr.net/npm/cropperjs@1.6.1/dist/cropper.min.css
+    - tagImageGrabber.css
   javascript:
     - https://cdn.jsdelivr.net/npm/cropperjs@1.6.1/dist/cropper.min.js
     - tagImageGrabber.js
