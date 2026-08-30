@@ -11,6 +11,7 @@
   const ReactDOM = PluginApi.ReactDOM;
   const Apollo = PluginApi.libraries.Apollo;
   const Icon = PluginApi.components.Icon;
+  const { Button, Modal } = PluginApi.libraries.Bootstrap;
   const { faImage } = PluginApi.libraries.FontAwesomeSolid;
   const baseURL =
     document.querySelector("base")?.getAttribute("href") || "/";
@@ -1134,7 +1135,7 @@
           });
         },
       },
-      busy ? "Saving…" : "Choose Image from Linked Content"
+      busy ? "Saving…" : "Set Image..."
     );
     return ReactDOM.createPortal(button, target);
   }
@@ -1193,7 +1194,147 @@
     );
   }
 
+  function PerformerTagImageAction({ performer, activeImage }) {
+    const [show, setShow] = React.useState(false);
+    const [selectedTag, setSelectedTag] = React.useState(null);
+    const [pendingTag, setPendingTag] = React.useState(null);
+    const [saving, setSaving] = React.useState(false);
+    const [target, setTarget] = React.useState(null);
+    const apolloClient = Apollo.useApolloClient();
+    const TagSelect = PluginApi.components.TagSelect;
+    const hasImage =
+      activeImage && !String(activeImage).includes("default=true");
+
+    React.useEffect(() => {
+      function updateTarget() {
+        const deleteButton = document.querySelector(
+          "#performer-page .details-edit .delete"
+        );
+        setTarget(deleteButton ? deleteButton.parentElement : null);
+      }
+
+      updateTarget();
+      const observer = new MutationObserver(updateTarget);
+      const page = document.querySelector("#performer-page");
+      if (page) observer.observe(page, { childList: true, subtree: true });
+      return () => observer.disconnect();
+    }, []);
+
+    const saveImage = (tag) => {
+      openCropDialog(activeImage, async (imageValue) => {
+        setSaving(true);
+        try {
+          const updatedTag = await saveTagImage(tag.id, imageValue);
+          refreshTagImageInCache(apolloClient, updatedTag);
+        } catch (err) {
+          window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
+        } finally {
+          setSaving(false);
+        }
+      });
+    };
+
+    if (!hasImage || !TagSelect || !target) return null;
+
+    return React.createElement(
+      React.Fragment,
+      null,
+      ReactDOM.createPortal(
+        React.createElement(
+          Button,
+          {
+            className: "performer-tag-image-action",
+            variant: "secondary",
+            disabled: saving,
+            title: `Use ${performer.name}'s image for a tag`,
+            onClick: () => {
+              setSelectedTag(null);
+              setShow(true);
+            },
+          },
+          "Use as Tag Image"
+        ),
+        target
+      ),
+      React.createElement(
+        Modal,
+        {
+          show,
+          onHide: () => setShow(false),
+          onExited: () => {
+            if (!pendingTag) return;
+            const tag = pendingTag;
+            setPendingTag(null);
+            saveImage(tag);
+          },
+        },
+        React.createElement(
+          Modal.Header,
+          { closeButton: true },
+          React.createElement(
+            Modal.Title,
+            null,
+            "Choose a target tag"
+          )
+        ),
+        React.createElement(
+          Modal.Body,
+          null,
+          React.createElement(
+            "p",
+            null,
+            `Choose the tag that should use ${performer.name}'s image.`
+          ),
+          React.createElement(TagSelect, {
+            creatable: false,
+            isMulti: false,
+            menuPortalTarget: document.body,
+            onSelect: (tags) => setSelectedTag(tags[0] || null),
+            values: selectedTag ? [selectedTag] : [],
+          })
+        ),
+        React.createElement(
+          Modal.Footer,
+          null,
+          React.createElement(
+            Button,
+            { variant: "secondary", onClick: () => setShow(false) },
+            "Cancel"
+          ),
+          React.createElement(
+            Button,
+            {
+              variant: "primary",
+              disabled: !selectedTag,
+              onClick: () => {
+                setPendingTag(selectedTag);
+                setShow(false);
+              },
+            },
+            "Use Image"
+          )
+        )
+      )
+    );
+  }
+
   function setupTagImageGrabber() {
+    PluginApi.patch.instead("PerformerPage", function (
+      props,
+      _,
+      originalComponent
+    ) {
+      return React.createElement(
+        React.Fragment,
+        null,
+        originalComponent(props),
+        React.createElement(PerformerTagImageAction, {
+          activeImage: props.performer.image_path,
+          performer: props.performer,
+        })
+      );
+    });
+
     PluginApi.patch.instead("TagCard.Image", function (
       props,
       _,
