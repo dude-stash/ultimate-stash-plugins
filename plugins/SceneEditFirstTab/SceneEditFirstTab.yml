@@ -1,0 +1,6 @@
+name: Scene Edit First Tab
+description: Replaces the read-only Details tab on the scene page with the edit form, as the first and default tab.
+version: 1.0.0
+ui:
+  javascript:
+    - SceneEditFirstTab.js
