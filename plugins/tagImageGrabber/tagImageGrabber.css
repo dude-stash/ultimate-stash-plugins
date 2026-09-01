@@ -84,3 +84,112 @@
     opacity: 1;
   }
 }
+
+/* Dialogs. Sizes match the three modals: crop, per-scene picker, and the
+   linked-content picker. */
+.tag-image-grabber-modal {
+  border: none;
+  padding: 1rem;
+}
+
+.tag-image-grabber-modal--crop {
+  max-width: 600px;
+  width: 90%;
+}
+
+.tag-image-grabber-modal--scene {
+  max-width: 800px;
+  width: 90%;
+}
+
+.tag-image-grabber-modal--picker {
+  max-width: 1000px;
+  width: 94%;
+}
+
+/* Crop view. The wrapper is inline-block so it takes only as much width as
+   the image needs - centering it relies on the container's text-align. */
+.tag-image-grabber-crop-container {
+  text-align: center;
+}
+
+.tag-image-grabber-crop-wrapper {
+  display: inline-block;
+  max-width: 100%;
+  position: relative;
+}
+
+.tag-image-grabber-crop-image {
+  display: block;
+  max-width: 100%;
+}
+
+.tag-image-grabber-crop-icon {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  z-index: 10;
+}
+
+.tag-image-grabber-toolbar {
+  gap: 6px;
+}
+
+.tag-image-grabber-row {
+  gap: 10px;
+}
+
+.tag-image-grabber-row--tight {
+  gap: 8px;
+}
+
+.tag-image-grabber-row--spaced {
+  margin-top: 10px;
+}
+
+.tag-image-grabber-block {
+  width: 100%;
+}
+
+/* Scene picker. */
+.tag-image-grabber-sprite-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: center;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.tag-image-grabber-player {
+  display: block;
+  max-height: 60vh;
+  width: 100%;
+}
+
+/* Linked-content picker. */
+.tag-image-grabber-search {
+  max-width: 280px;
+}
+
+.tag-image-grabber-content {
+  min-height: 240px;
+}
+
+.tag-image-grabber-source-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.tag-image-grabber-source-btn {
+  min-width: 0;
+}
+
+.tag-image-grabber-source-thumb {
+  height: 130px;
+  object-fit: contain;
+  width: 100%;
+}

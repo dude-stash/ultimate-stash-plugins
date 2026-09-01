@@ -16,7 +16,7 @@ Add this repository as a plugin source in Stash:
 
 ## Available Plugins
 
-### Tag Image Grabber (v0.8)
+### Tag Image Grabber (v0.12)
 
 Choose a tag image from linked images, scenes, or performers.
 
@@ -31,7 +31,9 @@ Choose a tag image from linked images, scenes, or performers.
 [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary)
 plugin must be available from the official CommunityScripts source.
 
-### Scene Edit First Tab (v1.0.0)
+**Manual:** [How to use Tag Image Grabber](docs/tag-image-grabber.md)
+
+### Scene Edit First Tab (v1.0.1)
 
 Replace the read-only Details tab on scene pages with the edit form.
 
@@ -41,6 +43,8 @@ Replace the read-only Details tab on scene pages with the edit form.
 - Labels the promoted edit tab as Details.
 - Redirects the scene-page `a` keyboard shortcut to the edit form.
 - Preserves the remaining scene tabs in their existing order.
+
+**Manual:** [How to use Scene Edit First Tab](docs/scene-edit-first-tab.md)
 
 ## Support
 
