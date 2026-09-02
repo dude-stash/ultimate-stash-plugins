@@ -84,13 +84,19 @@
     );
   }
 
-  PluginApi.patch.before("ScenePage.Tabs", function (props) {
+  // Both patched slots do the same thing: promote the edit child to the front
+  // and drop the read-only details child. They differ only in what the
+  // promoted child looks like (a relabelled nav item vs. the pane itself) and
+  // in the warning text, so `label` and `transform` are all that varies.
+  function promoteEditFirst(props, label, transform) {
     try {
       const { edit, rest } = reorder(props.children);
       // Without an edit tab to promote, removing the details tab would leave
       // the page with nothing to show. Pass through untouched instead.
       if (!edit) {
-        console.warn("[SceneEditFirstTab] edit tab not found; leaving tabs as-is");
+        console.warn(
+          "[SceneEditFirstTab] " + label + " not found; leaving tabs as-is"
+        );
         return [props];
       }
       return [
@@ -98,33 +104,25 @@
           children: React.createElement(
             React.Fragment,
             null,
-            relabel(edit),
-            React.createElement(TabDefaulter, { key: "tab-defaulter" }),
+            ...transform(edit),
             ...rest
           ),
         }),
       ];
     } catch (e) {
-      console.error("[SceneEditFirstTab] ScenePage.Tabs patch failed", e);
+      console.error("[SceneEditFirstTab] " + label + " patch failed", e);
       return [props];
     }
+  }
+
+  PluginApi.patch.before("ScenePage.Tabs", function (props) {
+    return promoteEditFirst(props, "edit tab", (edit) => [
+      relabel(edit),
+      React.createElement(TabDefaulter, { key: "tab-defaulter" }),
+    ]);
   });
 
   PluginApi.patch.before("ScenePage.TabContent", function (props) {
-    try {
-      const { edit, rest } = reorder(props.children);
-      if (!edit) {
-        console.warn("[SceneEditFirstTab] edit pane not found; leaving panes as-is");
-        return [props];
-      }
-      return [
-        Object.assign({}, props, {
-          children: React.createElement(React.Fragment, null, edit, ...rest),
-        }),
-      ];
-    } catch (e) {
-      console.error("[SceneEditFirstTab] ScenePage.TabContent patch failed", e);
-      return [props];
-    }
+    return promoteEditFirst(props, "edit pane", (edit) => [edit]);
   });
 })();

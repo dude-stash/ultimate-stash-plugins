@@ -7,12 +7,17 @@
   "use strict";
 
   const PluginApi = window.PluginApi;
+  if (!PluginApi || !PluginApi.patch) {
+    console.error("[TagImageGrabber] PluginApi.patch is unavailable");
+    return;
+  }
+
   const React = PluginApi.React;
   const ReactDOM = PluginApi.ReactDOM;
   const Apollo = PluginApi.libraries.Apollo;
   const Icon = PluginApi.components.Icon;
   const { Button, Modal } = PluginApi.libraries.Bootstrap;
-  const { faImage } = PluginApi.libraries.FontAwesomeSolid;
+  const { faImage, faCrop } = PluginApi.libraries.FontAwesomeSolid;
   const baseURL =
     document.querySelector("base")?.getAttribute("href") || "/";
   const normalizedBaseURL = baseURL.endsWith("/") ? baseURL : `${baseURL}/`;
@@ -22,6 +27,63 @@
   ).href;
 
   const TAG_UPDATE_MUTATION = `mutation TagImageGrabberUpdate($input: TagUpdateInput!) { tagUpdate(input: $input) { id image_path } }`;
+
+  // --- Small DOM/reporting helpers -------------------------------------
+  //
+  // The modals below are built with vanilla DOM rather than React (they are
+  // opened from imperative callbacks, outside any component tree), which
+  // otherwise means a create/className/text/listener/append block per button.
+
+  function alertFailure(message) {
+    window.alert(`Tag Image Grabber: ${message}`);
+  }
+
+  function makeButton(options) {
+    const btn = document.createElement("button");
+    btn.type = options.type || "button";
+    if (options.className) btn.className = options.className;
+    if (options.html !== undefined) btn.innerHTML = options.html;
+    else if (options.text !== undefined) btn.innerText = options.text;
+    if (options.title) btn.title = options.title;
+    if (options.disabled) btn.disabled = true;
+    if (options.onClick) btn.addEventListener("click", options.onClick);
+    if (options.parent) options.parent.appendChild(btn);
+    return btn;
+  }
+
+  function makeElement(tag, className, parent) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (parent) parent.appendChild(el);
+    return el;
+  }
+
+  function makeStatus(text, parent) {
+    const status = makeElement("p", "text-center", parent);
+    status.innerText = text;
+    return status;
+  }
+
+  // Creates the <dialog>, appends it to the body, and returns it. `size` picks
+  // one of the width variants in tagImageGrabber.css.
+  function makeDialog(size, ariaLabel, extraClassName) {
+    const modal = document.createElement("dialog");
+    modal.className = `tag-image-grabber-modal tag-image-grabber-modal--${size} bg-dark${
+      extraClassName ? ` ${extraClassName}` : ""
+    }`;
+    modal.setAttribute("aria-label", ariaLabel);
+    document.body.appendChild(modal);
+    return modal;
+  }
+
+  // Escape / the browser's own dismiss gesture should run the same teardown as
+  // the Cancel button rather than leaving the detached dialog in the DOM.
+  function onDialogCancel(modal, handler) {
+    modal.addEventListener("cancel", (event) => {
+      event.preventDefault();
+      handler();
+    });
+  }
 
   async function callGQL(query, variables) {
     const response = await fetch(graphqlURL, {
@@ -67,6 +129,13 @@
   // with the new value automatically. The image URL itself is already
   // cache-busted server-side (image_path includes ?t=<updated_at>), so
   // fetching the fresh value is all that's needed.
+  const TAG_IMAGE_FRAGMENT = Apollo.gql`
+    fragment TagImageGrabberRefreshedImage on Tag {
+      id
+      image_path
+    }
+  `;
+
   function refreshTagImageInCache(apolloClient, tag) {
     if (!apolloClient) return;
     try {
@@ -80,16 +149,22 @@
 
       apolloClient.writeFragment({
         id: cacheId,
-        fragment: Apollo.gql`
-          fragment TagImageGrabberRefreshedImage on Tag {
-            id
-            image_path
-          }
-        `,
+        fragment: TAG_IMAGE_FRAGMENT,
         data: { __typename: "Tag", id: tag.id, image_path: tag.image_path },
       });
     } catch (err) {
       // best-effort - a stale hover preview isn't worth failing the save over
+    }
+  }
+
+  // Save + cache refresh + the shared failure report, used by every entry
+  // point (tag page, tag card, hover card, performer page).
+  async function commitTagImage(apolloClient, tagId, imageValue) {
+    try {
+      const updatedTag = await saveTagImage(tagId, imageValue);
+      refreshTagImageInCache(apolloClient, updatedTag);
+    } catch (err) {
+      alertFailure(`failed to save tag image (${err})`);
     }
   }
 
@@ -181,12 +256,9 @@
     // image needs (important once the image is a narrower square crop, not
     // always a near-full-width landscape) - centering it needs the parent's
     // text-align, not just wrapper's own styles.
-    imgContainer.style.textAlign = "center";
+    imgContainer.classList.add("tag-image-grabber-crop-container");
 
-    const wrapper = document.createElement("div");
-    wrapper.style.position = "relative";
-    wrapper.style.display = "inline-block";
-    wrapper.style.maxWidth = "100%";
+    const wrapper = makeElement("div", "tag-image-grabber-crop-wrapper");
 
     // Toggled between "d-none" and "d-flex ..." (not a plain inline
     // style.display) - Bootstrap's utility classes set `display` with
@@ -194,9 +266,7 @@
     // style and keep this visible regardless of crop state. Appended after
     // `wrapper` so it renders below the image, still above the Save/Cancel
     // row in `actionsContainer`.
-    const cropToolbar = document.createElement("div");
-    cropToolbar.className = "d-none";
-    cropToolbar.style.gap = "6px";
+    const cropToolbar = makeElement("div", "tag-image-grabber-toolbar d-none");
     imgContainer.appendChild(wrapper);
     imgContainer.appendChild(cropToolbar);
 
@@ -204,12 +274,9 @@
     // entered - otherwise the full original flashes on screen first and
     // then visibly jumps to the (usually smaller/differently-shaped) square
     // crop a moment later.
-    const img = document.createElement("img");
+    const img = makeElement("img", "tag-image-grabber-crop-image", wrapper);
     img.src = srcUrl;
-    img.style.display = "block";
-    img.style.maxWidth = "100%";
     img.style.visibility = "hidden";
-    wrapper.appendChild(img);
 
     let cropper = null;
     // What Save reports when Cropper isn't active - starts as the original,
@@ -239,9 +306,15 @@
 
     function enterCropMode() {
       if (cropper || !originalDataUrl) return;
+      // Cropper.js is loaded from a CDN by the plugin yml; if that request
+      // failed there is nothing to enter crop mode with.
+      if (typeof window.Cropper !== "function") {
+        alertFailure("the cropper library failed to load.");
+        return;
+      }
       cropIconBtn.style.display = "none";
       cropToolbar.className =
-        "d-flex flex-row justify-content-center align-items-center mb-2";
+        "tag-image-grabber-toolbar d-flex flex-row justify-content-center align-items-center mb-2";
       // Cropping always operates on the original full image, regardless of
       // what's currently displayed (the square preview, or "Full"'s
       // original) - otherwise adjusting couldn't recover anything the
@@ -249,7 +322,7 @@
       img.src = srcUrl;
       img.style.visibility = "visible";
       const defaultRatio = CROP_ASPECT_RATIOS.find((r) => r.isDefault).value;
-      cropper = new Cropper(img, {
+      cropper = new window.Cropper(img, {
         viewMode: 1,
         aspectRatio: defaultRatio,
         movable: false,
@@ -273,63 +346,59 @@
         cropper.destroy();
         cropper = null;
       }
-      cropToolbar.className = "d-none";
+      cropToolbar.className = "tag-image-grabber-toolbar d-none";
       cropIconBtn.style.display = "inline-block";
       img.src = originalDataUrl;
       img.style.visibility = "visible";
       currentValue = originalDataUrl;
     }
 
-    const cropIconBtn = document.createElement("button");
-    cropIconBtn.type = "button";
-    cropIconBtn.className = "btn btn-secondary btn-sm";
-    cropIconBtn.title = "Crop";
-    cropIconBtn.innerHTML = faIconMarkup(PluginApi.libraries.FontAwesomeSolid.faCrop);
-    cropIconBtn.style.position = "absolute";
-    cropIconBtn.style.top = "8px";
-    cropIconBtn.style.right = "8px";
-    cropIconBtn.style.zIndex = "10";
-    cropIconBtn.disabled = true;
-    cropIconBtn.addEventListener("click", enterCropMode);
-    wrapper.appendChild(cropIconBtn);
+    const cropIconBtn = makeButton({
+      className: "tag-image-grabber-crop-icon btn btn-secondary btn-sm",
+      title: "Crop",
+      html: faIconMarkup(faCrop),
+      disabled: true,
+      onClick: enterCropMode,
+      parent: wrapper,
+    });
 
     CROP_ASPECT_RATIOS.forEach(({ label, value }) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "btn btn-outline-light btn-sm";
-      btn.innerText = label;
-      btn.addEventListener("click", () => {
-        if (!cropper) return;
-        cropper.setAspectRatio(value);
-        setActiveAspect(value);
+      const btn = makeButton({
+        className: "btn btn-outline-light btn-sm",
+        text: label,
+        onClick: () => {
+          if (!cropper) return;
+          cropper.setAspectRatio(value);
+          setActiveAspect(value);
+        },
+        parent: cropToolbar,
       });
       aspectBtns.push({ btn, ratio: value });
-      cropToolbar.appendChild(btn);
     });
 
-    const fullBtn = document.createElement("button");
-    fullBtn.type = "button";
-    fullBtn.className = "btn btn-outline-light btn-sm";
-    fullBtn.innerText = "Full";
-    fullBtn.title = "No crop - use the entire image";
-    fullBtn.addEventListener("click", () => {
-      selectFull();
-      setActiveFull();
+    const fullBtn = makeButton({
+      className: "btn btn-outline-light btn-sm",
+      text: "Full",
+      title: "No crop - use the entire image",
+      onClick: () => {
+        selectFull();
+        setActiveFull();
+      },
+      parent: cropToolbar,
     });
-    cropToolbar.appendChild(fullBtn);
 
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.className = "btn btn-success";
-    saveBtn.innerText = "Save";
-    saveBtn.disabled = true;
-    saveBtn.addEventListener("click", () => {
-      const value = cropper
-        ? cropper.getCroppedCanvas().toDataURL("image/jpeg")
-        : currentValue;
-      onSave(value);
+    const saveBtn = makeButton({
+      className: "btn btn-success",
+      text: "Save",
+      disabled: true,
+      onClick: () => {
+        const value = cropper
+          ? cropper.getCroppedCanvas().toDataURL("image/jpeg")
+          : currentValue;
+        onSave(value);
+      },
+      parent: actionsContainer,
     });
-    actionsContainer.appendChild(saveBtn);
 
     // Computed from the same <img> that's already loading `srcUrl` above,
     // once it's actually loaded - not a second Image() reloading the same
@@ -355,7 +424,7 @@
       } catch (err) {
         img.style.visibility = "visible";
         saveBtn.disabled = true;
-        window.alert(`Tag Image Grabber: failed to read image (${err})`);
+        alertFailure(`failed to read image (${err})`);
       }
     }
 
@@ -385,25 +454,13 @@
   // the user hits Save - either a cropped data URL, or the original URL if
   // they never activated cropping.
   function openCropDialog(srcUrl, onDone) {
-    const modal = document.createElement("dialog");
-    modal.className = "tag-image-grabber-modal bg-dark";
-    modal.style.width = "90%";
-    modal.style.maxWidth = "600px";
-    modal.style.border = "none";
-    modal.style.padding = "1rem";
-    modal.setAttribute("aria-label", "Crop tag image");
-    document.body.appendChild(modal);
-
-    const container = document.createElement("div");
-    container.style.width = "100%";
-    modal.appendChild(container);
-
-    const btnRow = document.createElement("div");
-    btnRow.className =
-      "d-flex flex-row justify-content-center align-items-center";
-    btnRow.style.gap = "10px";
-    btnRow.style.marginTop = "10px";
-    modal.appendChild(btnRow);
+    const modal = makeDialog("crop", "Crop tag image");
+    const container = makeElement("div", "tag-image-grabber-block", modal);
+    const btnRow = makeElement(
+      "div",
+      "tag-image-grabber-row tag-image-grabber-row--spaced d-flex flex-row justify-content-center align-items-center",
+      modal
+    );
 
     let cleanedUp = false;
     function cleanup() {
@@ -419,17 +476,14 @@
       onDone(value);
     });
 
-    const cancelBtn = document.createElement("button");
-    cancelBtn.type = "button";
-    cancelBtn.className = "btn btn-danger";
-    cancelBtn.innerText = "Cancel";
-    cancelBtn.addEventListener("click", cleanup);
-    btnRow.appendChild(cancelBtn);
-
-    modal.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      cleanup();
+    makeButton({
+      className: "btn btn-danger",
+      text: "Cancel",
+      onClick: cleanup,
+      parent: btnRow,
     });
+
+    onDialogCancel(modal, cleanup);
     modal.showModal();
   }
 
@@ -439,14 +493,16 @@
   function waitForVideoEvent(video, eventName, timeoutMs) {
     return new Promise((resolve) => {
       let settled = false;
+      let timer = null;
       function finish() {
         if (settled) return;
         settled = true;
+        if (timer !== null) window.clearTimeout(timer);
         video.removeEventListener(eventName, finish);
         resolve();
       }
       video.addEventListener(eventName, finish);
-      setTimeout(finish, timeoutMs);
+      timer = window.setTimeout(finish, timeoutMs);
     });
   }
 
@@ -522,27 +578,63 @@
   }
 
   // --- Picker for a tag's linked content ---
-
-  const LINKED_SOURCE_QUERIES = {
-    images: `query TagImageGrabberLinkedImages($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
+  //
+  // Everything that differs between the three source types lives here, so the
+  // picker itself never branches on `sourceType`:
+  //   query      - the GraphQL document, keyed by its find* root field
+  //   resultKey  - that root field's name in the response
+  //   itemsKey   - the list field inside it
+  //   label      - the tab caption
+  //   isUsable   - drops entries that can't supply an image at all
+  //   thumbUrl   - what the grid tile shows
+  //   fullUrl    - what gets cropped (scenes go through their own modal)
+  const LINKED_SOURCES = {
+    images: {
+      query: `query TagImageGrabberLinkedImages($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
       findImages(filter: $filter, image_filter: { tags: $tags }) {
         count
         images { id title paths { thumbnail image } }
       }
     }`,
-    scenes: `query TagImageGrabberLinkedScenes($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
+      resultKey: "findImages",
+      itemsKey: "images",
+      label: "Images",
+      isUsable: (item) => Boolean(item.paths && item.paths.image),
+      thumbUrl: (item) => item.paths.thumbnail || item.paths.image,
+      fullUrl: (item) => item.paths.image,
+    },
+    scenes: {
+      query: `query TagImageGrabberLinkedScenes($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
       findScenes(filter: $filter, scene_filter: { tags: $tags }) {
         count
         scenes { id title paths { screenshot vtt stream } }
       }
     }`,
-    performers: `query TagImageGrabberLinkedPerformers($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
+      resultKey: "findScenes",
+      itemsKey: "scenes",
+      label: "Scenes",
+      isUsable: () => true,
+      thumbUrl: (item) => item.paths.screenshot,
+      fullUrl: (item) => item.paths.screenshot,
+    },
+    performers: {
+      query: `query TagImageGrabberLinkedPerformers($filter: FindFilterType, $tags: HierarchicalMultiCriterionInput!) {
       findPerformers(filter: $filter, performer_filter: { tags: $tags }) {
         count
         performers { id name image_path }
       }
     }`,
+      resultKey: "findPerformers",
+      itemsKey: "performers",
+      label: "Performers",
+      isUsable: (item) =>
+        Boolean(item.image_path && !item.image_path.includes("?default=true")),
+      thumbUrl: (item) => item.image_path,
+      fullUrl: (item) => item.image_path,
+    },
   };
+
+  const SOURCE_TYPES = ["images", "scenes", "performers"];
 
   function captureVideoElement(video) {
     if (!video || !video.videoWidth || video.readyState < 2) return null;
@@ -578,38 +670,26 @@
   }
 
   function openLinkedSceneModal(scene, onImageReady, onBack, onCancel) {
-    const modal = document.createElement("dialog");
-    modal.className = "tag-image-grabber-modal bg-dark text-white";
-    modal.style.width = "90%";
-    modal.style.maxWidth = "800px";
-    modal.style.border = "none";
-    modal.style.padding = "1rem";
-    modal.setAttribute(
-      "aria-label",
-      `Choose an image from ${scene.title || `scene ${scene.id}`}`
+    const modal = makeDialog(
+      "scene",
+      `Choose an image from ${scene.title || `scene ${scene.id}`}`,
+      "text-white"
     );
-    document.body.appendChild(modal);
 
-    const title = document.createElement("h5");
-    title.className = "text-center";
+    const title = makeElement("h5", "text-center", modal);
     title.innerText = scene.title || `Scene ${scene.id}`;
-    modal.appendChild(title);
 
-    const sourceRow = document.createElement("div");
-    sourceRow.className =
-      "d-flex flex-row flex-wrap justify-content-center align-items-center mb-2";
-    sourceRow.style.gap = "8px";
-    modal.appendChild(sourceRow);
-
-    const contentArea = document.createElement("div");
-    contentArea.style.width = "100%";
-    modal.appendChild(contentArea);
-
-    const actionRow = document.createElement("div");
-    actionRow.className =
-      "d-flex flex-row justify-content-center align-items-center mt-2";
-    actionRow.style.gap = "10px";
-    modal.appendChild(actionRow);
+    const sourceRow = makeElement(
+      "div",
+      "tag-image-grabber-row--tight mb-2 d-flex flex-row flex-wrap justify-content-center align-items-center",
+      modal
+    );
+    const contentArea = makeElement("div", "tag-image-grabber-block", modal);
+    const actionRow = makeElement(
+      "div",
+      "tag-image-grabber-row mt-2 d-flex flex-row justify-content-center align-items-center",
+      modal
+    );
 
     let cropUI = null;
     let video = null;
@@ -652,26 +732,26 @@
 
     function addCancelButton() {
       if (onBack) {
-        const back = document.createElement("button");
-        back.type = "button";
-        back.className = "btn btn-secondary";
-        back.innerText = "Back to Scenes";
-        back.addEventListener("click", () => {
-          cleanup();
-          onBack();
+        makeButton({
+          className: "btn btn-secondary",
+          text: "Back to Scenes",
+          onClick: () => {
+            cleanup();
+            onBack();
+          },
+          parent: actionRow,
         });
-        actionRow.appendChild(back);
       }
 
-      const cancel = document.createElement("button");
-      cancel.type = "button";
-      cancel.className = "btn btn-danger";
-      cancel.innerText = "Cancel";
-      cancel.addEventListener("click", () => {
-        cleanup();
-        if (onCancel) onCancel();
+      makeButton({
+        className: "btn btn-danger",
+        text: "Cancel",
+        onClick: () => {
+          cleanup();
+          if (onCancel) onCancel();
+        },
+        parent: actionRow,
       });
-      actionRow.appendChild(cancel);
     }
 
     function getVideo() {
@@ -685,10 +765,7 @@
 
     async function showCover() {
       const token = resetView();
-      const status = document.createElement("p");
-      status.className = "text-center";
-      status.innerText = "Loading scene cover...";
-      contentArea.appendChild(status);
+      const status = makeStatus("Loading scene cover...", contentArea);
       if (
         !scene.paths.screenshot ||
         !(await checkRealSceneCover(scene.paths.screenshot))
@@ -706,10 +783,7 @@
 
     async function showThumbnails() {
       const token = resetView();
-      const status = document.createElement("p");
-      status.className = "text-center";
-      status.innerText = "Loading thumbnails...";
-      contentArea.appendChild(status);
+      const status = makeStatus("Loading thumbnails...", contentArea);
       if (!scene.paths.vtt || !scene.paths.stream) {
         status.innerText = "This scene has no generated thumbnails.";
         addCancelButton();
@@ -731,39 +805,36 @@
       }
       if (token !== viewToken || cleanedUp) return;
       status.remove();
-      const grid = document.createElement("div");
-      grid.style.display = "flex";
-      grid.style.flexWrap = "wrap";
-      grid.style.justifyContent = "center";
-      grid.style.gap = "4px";
-      grid.style.maxHeight = "55vh";
-      grid.style.overflowY = "auto";
-      contentArea.appendChild(grid);
+      const grid = makeElement(
+        "div",
+        "tag-image-grabber-sprite-grid",
+        contentArea
+      );
       sprites.forEach((sprite) => {
-        const tile = document.createElement("button");
-        tile.type = "button";
-        tile.className = "btn p-0";
+        const tile = makeButton({
+          className: "btn p-0",
+          title: `Capture frame at ${Math.round(sprite.start)} seconds`,
+          onClick: async () => {
+            const captureToken = ++viewToken;
+            tile.disabled = true;
+            const dataUrl = await seekAndCaptureVideo(getVideo(), sprite.start);
+            if (captureToken !== viewToken || cleanedUp) return;
+            if (!dataUrl) {
+              tile.disabled = false;
+              alertFailure("couldn't capture this scene frame.");
+              return;
+            }
+            showCrop(dataUrl);
+          },
+          parent: grid,
+        });
+        // Per-sprite offsets into the shared sprite sheet - computed values,
+        // so they stay inline.
         tile.style.width = `${sprite.w}px`;
         tile.style.height = `${sprite.h}px`;
         tile.style.backgroundImage = `url(${sprite.url})`;
         tile.style.backgroundPosition = `-${sprite.x}px -${sprite.y}px`;
         tile.style.backgroundRepeat = "no-repeat";
-        tile.title = `Capture frame at ${Math.round(sprite.start)} seconds`;
-        tile.addEventListener("click", async () => {
-          const captureToken = ++viewToken;
-          tile.disabled = true;
-          const dataUrl = await seekAndCaptureVideo(getVideo(), sprite.start);
-          if (captureToken !== viewToken || cleanedUp) return;
-          if (!dataUrl) {
-            tile.disabled = false;
-            window.alert(
-              "Tag Image Grabber: couldn't capture this scene frame."
-            );
-            return;
-          }
-          showCrop(dataUrl);
-        });
-        grid.appendChild(tile);
       });
       addCancelButton();
     }
@@ -771,61 +842,45 @@
     function showVideo() {
       resetView();
       if (!scene.paths.stream) {
-        const status = document.createElement("p");
-        status.className = "text-center";
-        status.innerText = "This scene has no playable stream.";
-        contentArea.appendChild(status);
+        makeStatus("This scene has no playable stream.", contentArea);
         addCancelButton();
         return;
       }
       const player = getVideo();
       player.controls = true;
-      player.style.display = "block";
-      player.style.width = "100%";
-      player.style.maxHeight = "60vh";
+      player.className = "tag-image-grabber-player";
       contentArea.appendChild(player);
 
-      const capture = document.createElement("button");
-      capture.type = "button";
-      capture.className = "btn btn-success";
-      capture.innerText = "Capture Current Frame";
-      capture.addEventListener("click", () => {
-        const dataUrl = captureVideoElement(player);
-        if (!dataUrl) {
-          window.alert(
-            "Tag Image Grabber: wait for the video frame to load first."
-          );
-          return;
-        }
-        showCrop(dataUrl);
+      makeButton({
+        className: "btn btn-success",
+        text: "Capture Current Frame",
+        onClick: () => {
+          const dataUrl = captureVideoElement(player);
+          if (!dataUrl) {
+            alertFailure("wait for the video frame to load first.");
+            return;
+          }
+          showCrop(dataUrl);
+        },
+        parent: actionRow,
       });
-      actionRow.appendChild(capture);
       addCancelButton();
     }
 
-    const coverButton = document.createElement("button");
-    coverButton.type = "button";
-    coverButton.className = "btn btn-outline-light btn-sm";
-    coverButton.innerText = "Scene cover";
-    coverButton.addEventListener("click", showCover);
-    sourceRow.appendChild(coverButton);
+    [
+      { text: "Scene cover", onClick: showCover },
+      { text: "Thumbnails", onClick: showThumbnails },
+      { text: "Video frame", onClick: showVideo },
+    ].forEach(({ text, onClick }) =>
+      makeButton({
+        className: "btn btn-outline-light btn-sm",
+        text,
+        onClick,
+        parent: sourceRow,
+      })
+    );
 
-    const thumbnailButton = document.createElement("button");
-    thumbnailButton.type = "button";
-    thumbnailButton.className = "btn btn-outline-light btn-sm";
-    thumbnailButton.innerText = "Thumbnails";
-    thumbnailButton.addEventListener("click", showThumbnails);
-    sourceRow.appendChild(thumbnailButton);
-
-    const videoButton = document.createElement("button");
-    videoButton.type = "button";
-    videoButton.className = "btn btn-outline-light btn-sm";
-    videoButton.innerText = "Video frame";
-    videoButton.addEventListener("click", showVideo);
-    sourceRow.appendChild(videoButton);
-
-    modal.addEventListener("cancel", (event) => {
-      event.preventDefault();
+    onDialogCancel(modal, () => {
       cleanup();
       if (onCancel) onCancel();
     });
@@ -839,50 +894,37 @@
   }
 
   function openLinkedContentPicker(tag, onImageReady) {
-    const modal = document.createElement("dialog");
-    modal.className = "tag-image-grabber-modal bg-dark text-white";
-    modal.style.width = "94%";
-    modal.style.maxWidth = "1000px";
-    modal.style.border = "none";
-    modal.style.padding = "1rem";
-    modal.setAttribute(
-      "aria-label",
-      `Choose linked content for ${tag.name}`
+    const modal = makeDialog(
+      "picker",
+      `Choose linked content for ${tag.name}`,
+      "text-white"
     );
-    document.body.appendChild(modal);
 
-    const heading = document.createElement("h4");
-    heading.className = "text-center";
+    const heading = makeElement("h4", "text-center", modal);
     heading.innerText = `Choose an image for ${tag.name}`;
-    modal.appendChild(heading);
 
-    const controls = document.createElement("div");
-    controls.className =
-      "d-flex flex-row flex-wrap justify-content-center align-items-center mb-3";
-    controls.style.gap = "8px";
-    modal.appendChild(controls);
+    const controls = makeElement(
+      "div",
+      "tag-image-grabber-row--tight mb-3 d-flex flex-row flex-wrap justify-content-center align-items-center",
+      modal
+    );
 
-    const search = document.createElement("input");
+    const search = makeElement(
+      "input",
+      "tag-image-grabber-search form-control",
+      controls
+    );
     search.type = "search";
-    search.className = "form-control";
     search.placeholder = "Search linked content";
     search.setAttribute("aria-label", "Search linked content");
-    search.style.maxWidth = "280px";
-    controls.appendChild(search);
 
-    const tabs = document.createElement("div");
-    tabs.className = "btn-group";
-    controls.appendChild(tabs);
-
-    const content = document.createElement("div");
-    content.style.minHeight = "240px";
-    modal.appendChild(content);
-
-    const footer = document.createElement("div");
-    footer.className =
-      "d-flex flex-row justify-content-center align-items-center mt-3";
-    footer.style.gap = "8px";
-    modal.appendChild(footer);
+    const tabs = makeElement("div", "btn-group", controls);
+    const content = makeElement("div", "tag-image-grabber-content", modal);
+    const footer = makeElement(
+      "div",
+      "tag-image-grabber-row--tight mt-3 d-flex flex-row justify-content-center align-items-center",
+      modal
+    );
 
     let sourceType = "scenes";
     let page = 1;
@@ -920,101 +962,73 @@
         return;
       }
       cleanup();
-      const srcUrl =
-        sourceType === "images" ? source.paths.image : source.image_path;
-      openCropDialog(srcUrl, onImageReady);
+      openCropDialog(LINKED_SOURCES[sourceType].fullUrl(source), onImageReady);
     }
 
     function renderFooter(count) {
       footer.innerHTML = "";
-      const previous = document.createElement("button");
-      previous.type = "button";
-      previous.className = "btn btn-secondary";
-      previous.innerText = "Previous";
-      previous.disabled = page <= 1;
-      previous.addEventListener("click", () => {
-        page--;
-        loadSources();
+      makeButton({
+        className: "btn btn-secondary",
+        text: "Previous",
+        disabled: page <= 1,
+        onClick: () => {
+          page--;
+          loadSources();
+        },
+        parent: footer,
       });
-      footer.appendChild(previous);
 
-      const status = document.createElement("span");
+      const status = makeElement("span", null, footer);
       status.innerText = `Page ${page} of ${Math.max(
         1,
         Math.ceil(count / perPage)
       )}`;
-      footer.appendChild(status);
 
-      const next = document.createElement("button");
-      next.type = "button";
-      next.className = "btn btn-secondary";
-      next.innerText = "Next";
-      next.disabled = page * perPage >= count;
-      next.addEventListener("click", () => {
-        page++;
-        loadSources();
+      makeButton({
+        className: "btn btn-secondary",
+        text: "Next",
+        disabled: page * perPage >= count,
+        onClick: () => {
+          page++;
+          loadSources();
+        },
+        parent: footer,
       });
-      footer.appendChild(next);
 
-      const cancel = document.createElement("button");
-      cancel.type = "button";
-      cancel.className = "btn btn-danger";
-      cancel.innerText = "Cancel";
-      cancel.addEventListener("click", cleanup);
-      footer.appendChild(cancel);
+      makeButton({
+        className: "btn btn-danger",
+        text: "Cancel",
+        onClick: cleanup,
+        parent: footer,
+      });
     }
 
     function renderSources(items, count) {
       content.innerHTML = "";
-      const usable =
-        sourceType === "performers"
-          ? items.filter(
-              (item) =>
-                item.image_path && !item.image_path.includes("?default=true")
-            )
-          : sourceType === "images"
-            ? items.filter((item) => item.paths && item.paths.image)
-            : items;
+      const source = LINKED_SOURCES[sourceType];
+      const usable = items.filter(source.isUsable);
       if (!usable.length) {
-        const empty = document.createElement("p");
-        empty.className = "text-center";
-        empty.innerText = "No usable linked content found.";
-        content.appendChild(empty);
+        makeStatus("No usable linked content found.", content);
         renderFooter(count);
         return;
       }
-      const grid = document.createElement("div");
-      grid.style.display = "grid";
-      grid.style.gridTemplateColumns =
-        "repeat(auto-fill, minmax(140px, 1fr))";
-      grid.style.gap = "10px";
-      grid.style.maxHeight = "62vh";
-      grid.style.overflowY = "auto";
-      content.appendChild(grid);
+      const grid = makeElement("div", "tag-image-grabber-source-grid", content);
       usable.forEach((item) => {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "btn btn-secondary p-2";
-        button.style.minWidth = "0";
-        const image = document.createElement("img");
+        const button = makeButton({
+          className: "tag-image-grabber-source-btn btn btn-secondary p-2",
+          onClick: () => selectSource(item),
+          parent: grid,
+        });
+        const image = makeElement(
+          "img",
+          "tag-image-grabber-source-thumb",
+          button
+        );
         image.alt = "";
         image.loading = "lazy";
-        image.style.width = "100%";
-        image.style.height = "130px";
-        image.style.objectFit = "contain";
-        image.src =
-          sourceType === "images"
-            ? item.paths.thumbnail || item.paths.image
-            : sourceType === "scenes"
-              ? item.paths.screenshot
-              : item.image_path;
-        button.appendChild(image);
-        const label = document.createElement("div");
-        label.className = "text-truncate mt-1";
+        image.src = source.thumbUrl(item);
+        const label = makeElement("div", "text-truncate mt-1", button);
         label.innerText = item.title || item.name || `${sourceType} ${item.id}`;
-        button.appendChild(label);
-        button.addEventListener("click", () => selectSource(item));
-        grid.appendChild(button);
       });
       renderFooter(count);
     }
@@ -1023,10 +1037,7 @@
       const token = ++requestToken;
       content.innerHTML = "";
       footer.innerHTML = "";
-      const loading = document.createElement("p");
-      loading.className = "text-center";
-      loading.innerText = "Loading linked content...";
-      content.appendChild(loading);
+      const loading = makeStatus("Loading linked content...", content);
       Object.entries(tabButtons).forEach(([key, button]) => {
         button.classList.toggle("active", key === sourceType);
       });
@@ -1044,19 +1055,12 @@
           depth: 0,
         },
       };
+      const source = LINKED_SOURCES[sourceType];
       try {
-        const data = await callGQL(
-          LINKED_SOURCE_QUERIES[sourceType],
-          variables
-        );
+        const data = await callGQL(source.query, variables);
         if (token !== requestToken || cleanedUp) return;
-        const resultName =
-          sourceType === "images"
-            ? "findImages"
-            : sourceType === "scenes"
-              ? "findScenes"
-              : "findPerformers";
-        renderSources(data[resultName][sourceType], data[resultName].count);
+        const result = data[source.resultKey];
+        renderSources(result[source.itemsKey], result.count);
       } catch (err) {
         if (token !== requestToken || cleanedUp) return;
         loading.innerText = `Failed to load linked content (${err}).`;
@@ -1064,18 +1068,17 @@
       }
     }
 
-    ["images", "scenes", "performers"].forEach((type) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "btn btn-outline-light";
-      button.innerText = type[0].toUpperCase() + type.slice(1);
-      button.addEventListener("click", () => {
-        sourceType = type;
-        page = 1;
-        loadSources();
+    SOURCE_TYPES.forEach((type) => {
+      tabButtons[type] = makeButton({
+        className: "btn btn-outline-light",
+        text: LINKED_SOURCES[type].label,
+        onClick: () => {
+          sourceType = type;
+          page = 1;
+          loadSources();
+        },
+        parent: tabs,
       });
-      tabButtons[type] = button;
-      tabs.appendChild(button);
     });
 
     search.addEventListener("input", () => {
@@ -1085,10 +1088,7 @@
         loadSources();
       }, 250);
     });
-    modal.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      cleanup();
-    });
+    onDialogCancel(modal, cleanup);
     modal.showModal();
     search.focus();
     loadSources();
@@ -1124,12 +1124,7 @@
       openLinkedContentPicker(tag, async (imageValue) => {
         setBusy(true);
         try {
-          const updatedTag = await saveTagImage(tag.id, imageValue);
-          refreshTagImageInCache(apolloClient, updatedTag);
-        } catch (err) {
-          window.alert(
-            `Tag Image Grabber: failed to save tag image (${err})`
-          );
+          await commitTagImage(apolloClient, tag.id, imageValue);
         } finally {
           setBusy(false);
         }
@@ -1197,16 +1192,11 @@
   function useTagImagePicker(tag) {
     const apolloClient = Apollo.useApolloClient();
 
-    return () => {
-      openLinkedContentPicker(tag, async (imageValue) => {
-        try {
-          const updatedTag = await saveTagImage(tag.id, imageValue);
-          refreshTagImageInCache(apolloClient, updatedTag);
-        } catch (err) {
-          window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
-        }
-      });
-    };
+    return React.useCallback(() => {
+      openLinkedContentPicker(tag, (imageValue) =>
+        commitTagImage(apolloClient, tag.id, imageValue)
+      );
+    }, [apolloClient, tag]);
   }
 
   function HoverCardClickableImage({ tag, children }) {
@@ -1278,10 +1268,7 @@
       openCropDialog(activeImage, async (imageValue) => {
         setSaving(true);
         try {
-          const updatedTag = await saveTagImage(tag.id, imageValue);
-          refreshTagImageInCache(apolloClient, updatedTag);
-        } catch (err) {
-          window.alert(`Tag Image Grabber: failed to save tag image (${err})`);
+          await commitTagImage(apolloClient, tag.id, imageValue);
         } finally {
           setSaving(false);
         }
