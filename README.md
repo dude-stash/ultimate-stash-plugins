@@ -16,6 +16,21 @@ Add this repository as a plugin source in Stash:
 
 ## Available Plugins
 
+### Ultimate Scrape (v0.1)
+
+Search a configured stash-box with the filters Stash never exposes.
+
+**Features:**
+
+- Filter scenes by title, code, url, date, performers, tags and studio.
+- "Pairings" search: everyone who has worked with a given performer, and the
+  scenes they share.
+- Opens from the top nav, or from a scene page seeded with that scene.
+- Sync a result back onto the scene through Stash's own scrape dialog, which
+  also records the stash-box link.
+
+See the [user manual](docs/ultimate-scrape.md).
+
 ### Tag Image Grabber (v0.12)
 
 Choose a tag image from linked images, scenes, or performers.
