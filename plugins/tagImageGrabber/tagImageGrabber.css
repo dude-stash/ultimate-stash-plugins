@@ -85,42 +85,89 @@
   }
 }
 
-/* Dialogs. Sizes match the three modals: crop, per-scene picker, and the
-   linked-content picker. */
+/* Dialogs. All three modals (crop, per-scene picker, linked-content picker)
+   share one box: a fixed height, not a max-height, so the dialog never
+   resizes when you switch tab, land on an empty state, or move between the
+   grid, the video player and the crop view. The scrolling region is the flex
+   child below; the heading and button rows are the fixed header/footer. */
+/* `display` belongs on [open] alone: the browser hides a closed <dialog> with a
+   plain `dialog { display: none }` UA rule, which a class selector here would
+   outrank - leaving a dialog that has been closed to hand over to another one
+   (the picker opening the crop view) still painted behind it. */
+.tag-image-grabber-modal[open] {
+  display: flex;
+}
+
 .tag-image-grabber-modal {
+  /* The height the modal's own chrome leaves for an image or the video player:
+     the dialog's height less the tallest heading + source row + button row
+     combination (the scene view's) and the 1rem padding. Kept next to the
+     height it is derived from. */
+  --tig-media-max-height: calc(80vh - 10rem);
+
+  /* The crop area, once Cropper.js takes over: the same box less the ratio
+     toolbar that appears under it, so the toolbar stays on screen instead of
+     being pushed below the fold. */
+  --tig-crop-area-height: calc(80vh - 13rem);
+
   border: none;
+  box-sizing: border-box;
+  flex-direction: column;
+  height: 80vh;
+  max-width: 900px;
+  overflow: hidden;
   padding: 1rem;
-}
-
-.tag-image-grabber-modal--crop {
-  max-width: 600px;
   width: 90%;
 }
 
-.tag-image-grabber-modal--scene {
-  max-width: 800px;
-  width: 90%;
+/* Headings and button rows keep their natural height; only the scrolling
+   region below is allowed to flex. */
+.tag-image-grabber-modal > * {
+  flex: 0 0 auto;
 }
 
-.tag-image-grabber-modal--picker {
-  max-width: 1000px;
-  width: 94%;
-}
-
-/* Crop view. The wrapper is inline-block so it takes only as much width as
-   the image needs - centering it relies on the container's text-align. */
+/* Crop view. The wrapper takes only as much width as the image needs (so the
+   crop icon sits on the image's corner, not the region's) - the region's own
+   flex centering places it. */
 .tag-image-grabber-crop-container {
   text-align: center;
 }
 
+/* The image is capped, and the wrapper simply hugs it - the wrapper can't do
+   the capping itself, because a percentage max-height on the <img> would then
+   resolve against the wrapper's own auto height and be dropped, letting the
+   image overflow. The cap has to keep the aspect ratio, so it constrains
+   height only and lets width follow. */
 .tag-image-grabber-crop-wrapper {
   display: inline-block;
   max-width: 100%;
   position: relative;
 }
 
+/* Crop mode only. Cropper.js sizes its whole crop area from this element's
+   offsetWidth/offsetHeight (it measures `element.parentNode`), so it needs a
+   box that is already definite when the Cropper is constructed - a wrapper
+   that shrink-wraps a just-swapped, not-yet-loaded <img> gives it a stale or
+   collapsed size, which is what leaves the image off-centre with the toolbar
+   stranded below it. An explicit box also makes the crop area identical
+   whatever the image's shape. */
+.tag-image-grabber-crop-wrapper--cropping {
+  display: block;
+  height: var(--tig-crop-area-height);
+  width: 100%;
+}
+
+/* Because that box is a fixed shape and the image isn't, there is usually some
+   of it left over beside or below the image. Cropper.js fills that with its
+   own transparency checkerboard, which reads as noise here - blank it out and
+   let the dialog's own background show through. */
+.tag-image-grabber-crop-wrapper .cropper-bg {
+  background-image: none;
+}
+
 .tag-image-grabber-crop-image {
   display: block;
+  max-height: var(--tig-media-max-height);
   max-width: 100%;
 }
 
@@ -147,7 +194,49 @@
   margin-top: 10px;
 }
 
-.tag-image-grabber-block {
+/* Dialog footers. Secondary and destructive actions (Cancel, Back) sit in the
+   left corner, the primary one (Save, Capture) in the right, so neither moves
+   around as views come and go inside the same dialog. */
+.tag-image-grabber-actions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.tag-image-grabber-actions-group {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+/* The outer two slots share the leftover width evenly, which is what keeps the
+   middle slot centred on the dialog no matter how wide the corners are. */
+.tag-image-grabber-actions-group--start,
+.tag-image-grabber-actions-group--end {
+  flex: 1 1 0;
+}
+
+.tag-image-grabber-actions-group--end {
+  justify-content: flex-end;
+}
+
+/* The scrolling region of each dialog, and the one part of the modal that
+   flexes. `min-height: 0` is what lets it shrink below its content and scroll
+   instead of stretching the modal. It centers whatever it holds - a cover, a
+   video, a sprite grid, an empty-state line - inside the constant-size box.
+   `safe center` rather than plain `center`: in a scrollable container, centred
+   content taller than the container has its top clipped and unreachable, and
+   `safe` falls back to start-aligned in exactly that case. */
+.tag-image-grabber-block,
+.tag-image-grabber-content {
+  align-items: center;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: safe center;
+  min-height: 0;
+  overflow-y: auto;
   width: 100%;
 }
 
@@ -157,13 +246,12 @@
   flex-wrap: wrap;
   gap: 4px;
   justify-content: center;
-  max-height: 55vh;
-  overflow-y: auto;
+  width: 100%;
 }
 
 .tag-image-grabber-player {
   display: block;
-  max-height: 60vh;
+  max-height: var(--tig-media-max-height);
   width: 100%;
 }
 
@@ -172,16 +260,11 @@
   max-width: 280px;
 }
 
-.tag-image-grabber-content {
-  min-height: 240px;
-}
-
 .tag-image-grabber-source-grid {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  max-height: 62vh;
-  overflow-y: auto;
+  width: 100%;
 }
 
 .tag-image-grabber-source-btn {

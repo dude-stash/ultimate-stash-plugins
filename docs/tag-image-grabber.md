@@ -16,8 +16,9 @@ or performers. Every candidate goes through a crop step before it is saved.
 
 ## Where to start from
 
-There are four entry points. All of them open the same picker (except the
-performer one, which is a shortcut - see below).
+There are four entry points. They open the same picker, with two exceptions:
+the performer one is a shortcut (see below), and a tag chip on a scene page
+goes straight to that scene.
 
 ### 1. The tag grid / tag list
 
@@ -28,8 +29,13 @@ On touch devices there is no hover, so the button is always visible.
 
 ### 2. A tag hover popover
 
-Anywhere a tag chip shows its preview card on hover (for example, in a scene's
-tag list), **click the tag image inside the popover**.
+Anywhere a tag chip shows its preview card on hover, **click the tag image
+inside the popover**, or the small image button on the card.
+
+On a **scene page** this is treated as being about the scene you are watching:
+it skips the picker and opens that scene directly, with **Scene cover**,
+**Thumbnails** and **Video frame** to choose from. Anywhere else the full
+picker opens.
 
 ### 3. The tag page
 
@@ -67,8 +73,10 @@ The picker lists everything linked to the tag, with three tabs:
 
 - **Search** filters the current tab. It waits a moment after you stop typing
   before it searches.
-- Results are **24 per page, newest first**. Use **Previous** / **Next**.
-- **Cancel**, or `Esc`, closes the picker without changing anything.
+- Results are **24 per page, newest first**. Use **Previous** / **Next**, in
+  the middle of the footer.
+- **Cancel**, in the bottom-left corner, or `Esc`, closes the picker without
+  changing anything.
 
 Some linked items are deliberately hidden, because they can't supply a usable
 image:
@@ -79,7 +87,9 @@ image:
 If a tab shows "No usable linked content found", nothing on that tab can supply
 an image - try another tab, or tag more content with this tag.
 
-Clicking an **image** or a **performer** goes straight to the crop step.
+Clicking an **image** or a **performer** goes straight to the crop step, which
+gets a **Back to Images** / **Back to Performers** button so a wrong pick isn't
+a dead end - it returns to the list with your search, tab and page intact.
 Clicking a **scene** opens the scene view.
 
 ## Choosing an image from a scene
@@ -98,7 +108,14 @@ The thumbnail's tooltip tells you which second it is.
 **Video frame** - the scene, in a normal video player. Scrub to exactly the
 frame you want, then click **Capture Current Frame**.
 
-**Back to Scenes** returns to the scene list with your search and page intact.
+**Back to Scenes**, next to Cancel in the bottom-left corner, returns to the
+scene list with your search and page intact. It only appears when you reached
+the scene view through the picker; started from a scene page's tag chip there
+is nothing to go back to, so there is just **Cancel**.
+
+Every dialog puts **Cancel**, and any **Back** button, in its bottom-left
+corner and the action that moves you forward - **Save**, **Capture Current
+Frame** - in the bottom-right, so neither moves as you switch between sources.
 
 ## The crop step
 
@@ -114,8 +131,12 @@ whatever the image came from.
   **16:9**, **9:16**, or **Free** (any shape you drag).
 - **Full** discards cropping entirely and uses the whole original image. You
   can press it at any time, including to back out of a crop in progress.
-- **Save** writes the image to the tag. **Cancel**, or `Esc`, discards
-  everything.
+- **Cancel Crop**, the last button on that same row, leaves crop mode and puts
+  back the image you had before you started cropping. It only appears while you
+  are cropping.
+- **Save**, in the dialog's bottom-right corner, writes the image to the tag.
+  **Cancel**, in the bottom-left corner, or `Esc`, closes the dialog without
+  changing anything.
 
 Why 1:1 by default: tag cards render their image inside a box of roughly 4:3,
 scaled to fit, so a square crop fills the card well at every zoom level without

@@ -64,11 +64,36 @@
     return status;
   }
 
-  // Creates the <dialog>, appends it to the body, and returns it. `size` picks
-  // one of the width variants in tagImageGrabber.css.
-  function makeDialog(size, ariaLabel, extraClassName) {
+  // Splits a dialog's footer row into three slots: `left` for secondary and
+  // destructive actions (Cancel, Back), `right` for the primary one (Save,
+  // Capture), and `center` for anything that belongs in the middle regardless
+  // of what the other two hold (the picker's paging). The outer two share the
+  // leftover width evenly, so the middle stays centred on the dialog even when
+  // only one side has buttons. Call it again to clear the row when the dialog
+  // switches view.
+  function makeActionGroups(row) {
+    row.innerHTML = "";
+    return {
+      left: makeElement(
+        "div",
+        "tag-image-grabber-actions-group tag-image-grabber-actions-group--start",
+        row
+      ),
+      center: makeElement("div", "tag-image-grabber-actions-group", row),
+      right: makeElement(
+        "div",
+        "tag-image-grabber-actions-group tag-image-grabber-actions-group--end",
+        row
+      ),
+    };
+  }
+
+  // Creates the <dialog>, appends it to the body, and returns it. Every dialog
+  // shares the one fixed size defined in tagImageGrabber.css - see the comment
+  // there for why the height is fixed rather than content-driven.
+  function makeDialog(ariaLabel, extraClassName) {
     const modal = document.createElement("dialog");
-    modal.className = `tag-image-grabber-modal tag-image-grabber-modal--${size} bg-dark${
+    modal.className = `tag-image-grabber-modal bg-dark${
       extraClassName ? ` ${extraClassName}` : ""
     }`;
     modal.setAttribute("aria-label", ariaLabel);
@@ -249,13 +274,16 @@
   // single green Save button is appended to `actionsContainer`, reporting
   // the cropped result while Cropper is active, otherwise whatever's
   // currently displayed (the square preview, or the full original after
-  // "Full"). Returns { destroy() } so the caller can clean up the Cropper
-  // instance on cancel/close/view-switch.
+  // "Full"), and a "Cancel Crop" button at the end of the ratio toolbar backs
+  // out of an in-progress crop without touching the dialog. Returns
+  // { destroy() } so the caller can clean up the Cropper instance on
+  // cancel/close/view-switch.
   function buildCropUI(imgContainer, actionsContainer, srcUrl, onSave) {
-    // `wrapper` is inline-block so it only takes up as much width as the
-    // image needs (important once the image is a narrower square crop, not
-    // always a near-full-width landscape) - centering it needs the parent's
-    // text-align, not just wrapper's own styles.
+    // `wrapper` only takes up as much width as the image needs (important once
+    // the image is a narrower square crop, not always a near-full-width
+    // landscape), so the crop icon sits on the image's own corner; the
+    // container centers it. In crop mode it takes an explicit box instead -
+    // see the CSS.
     imgContainer.classList.add("tag-image-grabber-crop-container");
 
     const wrapper = makeElement("div", "tag-image-grabber-crop-wrapper");
@@ -283,6 +311,9 @@
     // gets replaced with the square preview once it's ready (or with the
     // full original again after "Full" is picked).
     let currentValue = srcUrl;
+    // What was on screen when crop mode was entered, so backing out of a crop
+    // restores exactly that rather than jumping to some other image.
+    let preCropValue = null;
     let originalDataUrl = null;
     // The centered-square region applySquarePreview() used, hitched onto
     // Cropper's first crop box via setData() so it starts where the preview
@@ -312,9 +343,13 @@
         alertFailure("the cropper library failed to load.");
         return;
       }
+      preCropValue = currentValue;
       cropIconBtn.style.display = "none";
       cropToolbar.className =
         "tag-image-grabber-toolbar d-flex flex-row justify-content-center align-items-center mb-2";
+      // Before constructing the Cropper, not after: it measures this element
+      // to decide how big the crop area is (see the CSS comment).
+      wrapper.classList.add("tag-image-grabber-crop-wrapper--cropping");
       // Cropping always operates on the original full image, regardless of
       // what's currently displayed (the square preview, or "Full"'s
       // original) - otherwise adjusting couldn't recover anything the
@@ -338,19 +373,26 @@
       setActiveAspect(defaultRatio);
     }
 
-    // "Full" - no crop at all. Reachable both to skip cropping on first
-    // entry and to back out of an in-progress crop.
-    function selectFull() {
-      if (!originalDataUrl) return;
+    // Tears down the Cropper (if any) and puts `value` back on screen as a
+    // plain image. Shared by "Full" and by backing out of a crop.
+    function leaveCropMode(value) {
       if (cropper) {
         cropper.destroy();
         cropper = null;
       }
+      wrapper.classList.remove("tag-image-grabber-crop-wrapper--cropping");
       cropToolbar.className = "tag-image-grabber-toolbar d-none";
       cropIconBtn.style.display = "inline-block";
-      img.src = originalDataUrl;
+      img.src = value;
       img.style.visibility = "visible";
-      currentValue = originalDataUrl;
+      currentValue = value;
+    }
+
+    // "Full" - no crop at all. Reachable both to skip cropping on first
+    // entry and to back out of an in-progress crop.
+    function selectFull() {
+      if (!originalDataUrl) return;
+      leaveCropMode(originalDataUrl);
     }
 
     const cropIconBtn = makeButton({
@@ -383,6 +425,22 @@
       onClick: () => {
         selectFull();
         setActiveFull();
+      },
+      parent: cropToolbar,
+    });
+
+    // The way back out of crop mode. It belongs here, next to the crop's own
+    // controls, rather than in the dialog's Cancel button - that one closes the
+    // dialog, and having it mean two different things depending on the state
+    // was the confusing part. `btn-secondary` because this is an action, not
+    // another shape to toggle between.
+    makeButton({
+      className: "btn btn-secondary btn-sm",
+      text: "Cancel Crop",
+      title: "Stop cropping and go back to the image",
+      onClick: () => {
+        if (!cropper) return;
+        leaveCropMode(preCropValue === null ? currentValue : preCropValue);
       },
       parent: cropToolbar,
     });
@@ -453,14 +511,21 @@
   // Opens a crop dialog seeded from `srcUrl`. Calls onDone(dataUrlOrUrl) once
   // the user hits Save - either a cropped data URL, or the original URL if
   // they never activated cropping.
-  function openCropDialog(srcUrl, onDone) {
-    const modal = makeDialog("crop", "Crop tag image");
+  //
+  // `options` is for callers that opened this on top of something else:
+  // { backLabel, onBack } adds a button returning there (so picking the wrong
+  // image isn't a dead end), and { onCancel } lets them tear that something
+  // down when the user cancels out of here instead.
+  function openCropDialog(srcUrl, onDone, options) {
+    const opts = options || {};
+    const modal = makeDialog("Crop tag image");
     const container = makeElement("div", "tag-image-grabber-block", modal);
     const btnRow = makeElement(
       "div",
-      "tag-image-grabber-row tag-image-grabber-row--spaced d-flex flex-row justify-content-center align-items-center",
+      "tag-image-grabber-actions tag-image-grabber-row--spaced",
       modal
     );
+    const actions = makeActionGroups(btnRow);
 
     let cleanedUp = false;
     function cleanup() {
@@ -471,19 +536,36 @@
       modal.remove();
     }
 
-    const cropUI = buildCropUI(container, btnRow, srcUrl, (value) => {
+    const cropUI = buildCropUI(container, actions.right, srcUrl, (value) => {
       cleanup();
       onDone(value);
     });
 
+    function cancelDialog() {
+      cleanup();
+      if (opts.onCancel) opts.onCancel();
+    }
+
     makeButton({
       className: "btn btn-danger",
       text: "Cancel",
-      onClick: cleanup,
-      parent: btnRow,
+      onClick: cancelDialog,
+      parent: actions.left,
     });
 
-    onDialogCancel(modal, cleanup);
+    if (opts.onBack) {
+      makeButton({
+        className: "btn btn-secondary",
+        text: opts.backLabel || "Back",
+        onClick: () => {
+          cleanup();
+          opts.onBack();
+        },
+        parent: actions.left,
+      });
+    }
+
+    onDialogCancel(modal, cancelDialog);
     modal.showModal();
   }
 
@@ -523,6 +605,24 @@
     } catch (err) {
       return false;
     }
+  }
+
+  const CURRENT_SCENE_QUERY = `query TagImageGrabberCurrentScene($id: ID) { findScene(id: $id) { id title paths { screenshot vtt stream } } }`;
+
+  // Which scene, if any, the user is currently looking at. Read from the URL
+  // rather than from a component prop: the tag chips are rendered by TagLink /
+  // TagCard, which know nothing about the page around them. Deliberately not
+  // anchored to the start of the path so a Stash served under a sub-path
+  // (a non-root `base` href) still matches.
+  function getSceneIdFromUrl() {
+    const match = window.location.pathname.match(/\/scenes\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  // Exactly the fields openLinkedSceneModal() reads off a scene.
+  async function fetchSceneForPicker(sceneId) {
+    const data = await callGQL(CURRENT_SCENE_QUERY, { id: sceneId });
+    return data.findScene || null;
   }
 
   function parseVttTimestamp(ts) {
@@ -671,7 +771,6 @@
 
   function openLinkedSceneModal(scene, onImageReady, onBack, onCancel) {
     const modal = makeDialog(
-      "scene",
       `Choose an image from ${scene.title || `scene ${scene.id}`}`,
       "text-white"
     );
@@ -687,9 +786,10 @@
     const contentArea = makeElement("div", "tag-image-grabber-block", modal);
     const actionRow = makeElement(
       "div",
-      "tag-image-grabber-row mt-2 d-flex flex-row justify-content-center align-items-center",
+      "tag-image-grabber-actions mt-2",
       modal
     );
+    let actions = makeActionGroups(actionRow);
 
     let cropUI = null;
     let video = null;
@@ -717,20 +817,32 @@
         cropUI = null;
       }
       contentArea.innerHTML = "";
-      actionRow.innerHTML = "";
+      actions = makeActionGroups(actionRow);
       return viewToken;
     }
 
     function showCrop(srcUrl) {
       resetView();
-      cropUI = buildCropUI(contentArea, actionRow, srcUrl, (value) => {
+      cropUI = buildCropUI(contentArea, actions.right, srcUrl, (value) => {
         cleanup();
         onImageReady(value);
       });
       addCancelButton();
     }
 
+    function cancelModal() {
+      cleanup();
+      if (onCancel) onCancel();
+    }
+
     function addCancelButton() {
+      makeButton({
+        className: "btn btn-danger",
+        text: "Cancel",
+        onClick: cancelModal,
+        parent: actions.left,
+      });
+
       if (onBack) {
         makeButton({
           className: "btn btn-secondary",
@@ -739,19 +851,9 @@
             cleanup();
             onBack();
           },
-          parent: actionRow,
+          parent: actions.left,
         });
       }
-
-      makeButton({
-        className: "btn btn-danger",
-        text: "Cancel",
-        onClick: () => {
-          cleanup();
-          if (onCancel) onCancel();
-        },
-        parent: actionRow,
-      });
     }
 
     function getVideo() {
@@ -862,7 +964,7 @@
           }
           showCrop(dataUrl);
         },
-        parent: actionRow,
+        parent: actions.right,
       });
       addCancelButton();
     }
@@ -880,10 +982,7 @@
       })
     );
 
-    onDialogCancel(modal, () => {
-      cleanup();
-      if (onCancel) onCancel();
-    });
+    onDialogCancel(modal, cancelModal);
     modal.showModal();
     const initialCoverToken = viewToken + 1;
     showCover().then((hasCover) => {
@@ -895,7 +994,6 @@
 
   function openLinkedContentPicker(tag, onImageReady) {
     const modal = makeDialog(
-      "picker",
       `Choose linked content for ${tag.name}`,
       "text-white"
     );
@@ -922,7 +1020,7 @@
     const content = makeElement("div", "tag-image-grabber-content", modal);
     const footer = makeElement(
       "div",
-      "tag-image-grabber-row--tight mt-3 d-flex flex-row justify-content-center align-items-center",
+      "tag-image-grabber-actions mt-3",
       modal
     );
 
@@ -961,12 +1059,42 @@
         );
         return;
       }
-      cleanup();
-      openCropDialog(LINKED_SOURCES[sourceType].fullUrl(source), onImageReady);
+      // Same deal as the scene view above: hide this dialog rather than
+      // destroying it, so "Back to Images"/"Back to Performers" can bring it
+      // straight back with the search text, tab and page still in place.
+      const source_ = LINKED_SOURCES[sourceType];
+      modal.close();
+      openCropDialog(
+        source_.fullUrl(source),
+        (imageValue) => {
+          cleanup();
+          onImageReady(imageValue);
+        },
+        {
+          backLabel: `Back to ${source_.label}`,
+          onBack: () => {
+            if (cleanedUp) return;
+            modal.showModal();
+            search.focus();
+          },
+          onCancel: cleanup,
+        }
+      );
     }
 
     function renderFooter(count) {
-      footer.innerHTML = "";
+      // Cancel keeps the same left corner it has in the other two dialogs;
+      // paging sits in the middle, centred on the dialog rather than pushed
+      // around by whatever is beside it.
+      const actions = makeActionGroups(footer);
+
+      makeButton({
+        className: "btn btn-danger",
+        text: "Cancel",
+        onClick: cleanup,
+        parent: actions.left,
+      });
+
       makeButton({
         className: "btn btn-secondary",
         text: "Previous",
@@ -975,10 +1103,10 @@
           page--;
           loadSources();
         },
-        parent: footer,
+        parent: actions.center,
       });
 
-      const status = makeElement("span", null, footer);
+      const status = makeElement("span", null, actions.center);
       status.innerText = `Page ${page} of ${Math.max(
         1,
         Math.ceil(count / perPage)
@@ -992,14 +1120,7 @@
           page++;
           loadSources();
         },
-        parent: footer,
-      });
-
-      makeButton({
-        className: "btn btn-danger",
-        text: "Cancel",
-        onClick: cleanup,
-        parent: footer,
+        parent: actions.center,
       });
     }
 
@@ -1189,13 +1310,38 @@
     );
   }
 
+  // The picker behind both tag-chip entry points (the hover popover's image and
+  // its action button). On a scene page the chip is about the scene you're
+  // already watching, so it opens that scene's view directly - cover,
+  // thumbnails, video frame - instead of making you pick it out of a list of
+  // every scene carrying the tag. Anywhere else (tag grid, tag page) there is
+  // no such context, so the full linked-content picker opens as before.
   function useTagImagePicker(tag) {
     const apolloClient = Apollo.useApolloClient();
 
-    return React.useCallback(() => {
-      openLinkedContentPicker(tag, (imageValue) =>
-        commitTagImage(apolloClient, tag.id, imageValue)
-      );
+    return React.useCallback(async () => {
+      const onImageReady = (imageValue) =>
+        commitTagImage(apolloClient, tag.id, imageValue);
+
+      const sceneId = getSceneIdFromUrl();
+      if (sceneId) {
+        let scene = null;
+        try {
+          scene = await fetchSceneForPicker(sceneId);
+        } catch (err) {
+          scene = null;
+        }
+        if (scene) {
+          // No `onBack` - there is no scene list to go back to when we started
+          // from the scene itself, so addCancelButton() leaves that button out.
+          openLinkedSceneModal(scene, onImageReady, null, null);
+          return;
+        }
+        // Couldn't resolve the scene (bad id, permissions, network) - fall
+        // through to the full picker rather than dead-ending.
+      }
+
+      openLinkedContentPicker(tag, onImageReady);
     }, [apolloClient, tag]);
   }
 
@@ -1297,9 +1443,14 @@
         ),
         target
       ),
+      // Stash's own react-bootstrap modal, not one of the plugin's <dialog>s -
+      // it holds a single tag select, so it keeps Bootstrap's small
+      // content-sized box rather than the fixed one the image dialogs share.
+      // `centered` at least makes it sit where they do.
       React.createElement(
         Modal,
         {
+          centered: true,
           show,
           onHide: () => setShow(false),
           onExited: () => {
