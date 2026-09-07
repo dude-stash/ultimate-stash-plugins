@@ -43,13 +43,15 @@ many results to fetch - there is no next-page control.
 
 ## Pairings search
 
-The other way to find a scene: pick one performer and see everyone who has
-worked with them. This is the same query stash-box's own Pairings tab uses.
+The other way to find a scene: pick one performer and get the **scenes** they
+share with co-performers. This is the same pairing query stash-box's own
+Pairings tab uses, flattened into a scene list - stash-box has no scene
+filter for "appeared with this person".
 
-Choose a performer from the scene, optionally filter co-performers by name or
-gender, and tick **List the scenes they share** to expand each row into the
-scenes the two actually appear in together. Useful when the title tells you
-nothing but you recognise a face.
+Choose a performer from the scene, optionally narrow co-performers by name
+or gender, then search. Each row is a scene, with the same view/sync actions
+as the scenes search. Useful when the title tells you nothing but you
+recognise a face.
 
 ## Syncing a result onto your scene
 

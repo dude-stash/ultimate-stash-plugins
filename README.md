@@ -16,7 +16,7 @@ Add this repository as a plugin source in Stash:
 
 ## Available Plugins
 
-### Ultimate Scrape (v0.3)
+### Ultimate Scrape (v0.4)
 
 Search a configured stash-box with the filters Stash never exposes.
 
@@ -25,8 +25,7 @@ Search a configured stash-box with the filters Stash never exposes.
 - Filter scenes by title, studio code, url, date, performers, tags and studio.
   Title, code, URL, date and studio have on/off switches; performers and tags
   are tick lists.
-- "Pairings" search: everyone who has worked with a given performer, and the
-  scenes they share.
+- "Pairings" search: scenes a performer shares with co-stars.
 - Opens from the top nav, or from a scene page seeded with that scene.
 - Sync a result back onto the scene through Stash's own scrape dialog, which
   also records the stash-box link.

@@ -4,8 +4,9 @@
 // text (searchScene) or by file fingerprint (findScenesBySceneFingerprints).
 // Stash-box's own schema exposes far more: queryScenes(SceneQueryInput) filters
 // by title, code, url, date, performers, tags and studio, and queryPerformers
-// (performed_with) lists a performer's pairings. This plugin surfaces both, and
-// can sync a result back onto the local scene.
+// (performed_with) lists a performer's pairings. Pairings is flattened into
+// the scenes those people share, and a result can be synced onto the local
+// scene.
 (function () {
   "use strict";
 
@@ -39,17 +40,9 @@
     "CREATED_AT",
     "UPDATED_AT",
   ];
-  const PERFORMER_SORTS = [
-    "NAME",
-    "BIRTHDATE",
-    "SCENE_COUNT",
-    "CAREER_START_YEAR",
-    "DEBUT",
-    "LAST_SCENE",
-    "POPULARITY",
-    "CREATED_AT",
-    "UPDATED_AT",
-  ];
+  // Nested pairing scenes only carry title/date/duration, so those are the
+  // sorts we can actually apply after flattening.
+  const PAIRING_SCENE_SORTS = ["DATE", "TITLE", "DURATION"];
   const GENDERS = [
     "",
     "FEMALE",
@@ -88,29 +81,26 @@
     }
   `;
 
-  // queryPerformers(performed_with:) is what stash-box's own "Pairings" tab
-  // uses; Performer.scenes(performed_with:) narrows to the shared scenes.
-  const QUERY_PERFORMERS = `
-    query PluginQueryPerformers(
+  // queryPerformers(performed_with:) is what stash-box's own Pairings tab
+  // uses. SceneQueryInput has no performed_with, so shared scenes come from
+  // Performer.scenes(performed_with:) and are flattened into a scene list.
+  const QUERY_PAIRING_SCENES = `
+    query PluginQueryPairingScenes(
       $input: PerformerQueryInput!
       $performedWith: ID!
-      $fetchScenes: Boolean!
     ) {
       queryPerformers(input: $input) {
         count
         performers {
           id
-          name
-          disambiguation
-          gender
-          birth_date
-          scene_count
-          scenes(input: { performed_with: $performedWith })
-            @include(if: $fetchScenes) {
+          scenes(input: { performed_with: $performedWith }) {
             id
             title
             release_date
+            code
+            duration
             studio { name }
+            performers { performer { name } }
           }
         }
       }
@@ -202,13 +192,42 @@
     return data.queryScenes;
   }
 
-  async function runQueryPerformers(box, input, fetchScenes) {
-    const data = await gqlRequest(box, QUERY_PERFORMERS, {
+  // Pairings is a performer query; stash-box has no scene filter for
+  // "appeared with X". Collect unique shared scenes from matching co-stars.
+  function flattenPairingScenes(pairResult) {
+    const seen = {};
+    const scenes = [];
+    ((pairResult && pairResult.performers) || []).forEach(function (p) {
+      (p.scenes || []).forEach(function (sc) {
+        if (seen[sc.id]) return;
+        seen[sc.id] = true;
+        scenes.push(sc);
+      });
+    });
+    return scenes;
+  }
+
+  function sortScenes(scenes, sort, direction) {
+    const dir = direction === "ASC" ? 1 : -1;
+    return scenes.slice().sort(function (a, b) {
+      var cmp = 0;
+      if (sort === "TITLE") {
+        cmp = (a.title || "").localeCompare(b.title || "");
+      } else if (sort === "DURATION") {
+        cmp = (a.duration || 0) - (b.duration || 0);
+      } else {
+        cmp = (a.release_date || "").localeCompare(b.release_date || "");
+      }
+      return cmp * dir;
+    });
+  }
+
+  async function runQueryPairingScenes(box, input) {
+    const data = await gqlRequest(box, QUERY_PAIRING_SCENES, {
       input: input,
       performedWith: input.performed_with,
-      fetchScenes: fetchScenes,
     });
-    return data.queryPerformers;
+    return flattenPairingScenes(data.queryPerformers);
   }
 
   function useStashBox() {
@@ -494,13 +513,11 @@
     const [anchorOverride, setAnchorOverride] = React.useState("");
     const [coName, setCoName] = React.useState("");
     const [gender, setGender] = React.useState("");
-    const [performerSort, setPerformerSort] = React.useState("NAME");
-    const [fetchScenes, setFetchScenes] = React.useState(true);
 
     const [loading, setLoading] = React.useState(false);
     const [error, setError] = React.useState(undefined);
     const [sceneResult, setSceneResult] = React.useState(undefined);
-    const [pairResult, setPairResult] = React.useState(undefined);
+    const [resultNote, setResultNote] = React.useState("");
     const [busyId, setBusyId] = React.useState(undefined);
     const [syncTarget, setSyncTarget] = React.useState(undefined);
 
@@ -571,13 +588,15 @@
       return input;
     }
 
-    function buildPerformerInput() {
+    function buildPairingInput() {
+      // per_page caps co-performers looked up, not scenes. 100 is stash-box's
+      // usual max, so the flatten sees as many pairings as the box will give.
       const input = {
         performed_with: anchorId,
         page: 1,
-        per_page: perPage,
-        sort: performerSort,
-        direction: direction,
+        per_page: 100,
+        sort: "SCENE_COUNT",
+        direction: "DESC",
       };
       if (coName.trim()) input.names = coName.trim();
       if (gender) input.gender = gender;
@@ -592,16 +611,38 @@
       setError(undefined);
       try {
         if (mode === "pairings") {
-          setPairResult(await runQueryPerformers(box, buildPerformerInput(), fetchScenes));
-          setSceneResult(undefined);
+          const pairingSort =
+            PAIRING_SCENE_SORTS.indexOf(sort) >= 0 ? sort : "DATE";
+          const all = sortScenes(
+            await runQueryPairingScenes(box, buildPairingInput()),
+            pairingSort,
+            direction
+          );
+          const shown = all.slice(0, perPage);
+          setSceneResult({ count: all.length, scenes: shown });
+          setResultNote(
+            shown.length < all.length
+              ? "Showing " +
+                  shown.length +
+                  " of " +
+                  all.length +
+                  " scenes featuring " +
+                  (anchorName || "this performer")
+              : all.length +
+                  " scenes featuring " +
+                  (anchorName || "this performer")
+          );
         } else {
-          setSceneResult(await runQueryScenes(box, buildSceneInput()));
-          setPairResult(undefined);
+          const result = await runQueryScenes(box, buildSceneInput());
+          setSceneResult(result);
+          setResultNote(
+            result.count + " total matches on stash-box"
+          );
         }
       } catch (err) {
         setError(err.message || String(err));
         setSceneResult(undefined);
-        setPairResult(undefined);
+        setResultNote("");
       } finally {
         setLoading(false);
       }
@@ -787,31 +828,15 @@
               ]
             ),
             fieldRow(
-              {
-                id: "ultimate-scrape-fetch-scenes-row",
-                label: "Shared scenes",
-              },
-              [
-                React.createElement(Form.Check, {
-                  key: "fetchscenes",
-                  type: "checkbox",
-                  id: "ultimate-scrape-fetch-scenes",
-                  label: "List the scenes they share",
-                  checked: fetchScenes,
-                  onChange: () => setFetchScenes(!fetchScenes),
-                }),
-              ]
-            ),
-            fieldRow(
               { id: "ultimate-scrape-psort", label: "Sort" },
               [
                 selectInput(
                   {
                     key: "psort",
-                    value: performerSort,
-                    onChange: (e) => setPerformerSort(e.target.value),
+                    value: PAIRING_SCENE_SORTS.indexOf(sort) >= 0 ? sort : "DATE",
+                    onChange: (e) => setSort(e.target.value),
                   },
-                  enumOptions(PERFORMER_SORTS)
+                  enumOptions(PAIRING_SCENE_SORTS)
                 ),
                 selectInput(
                   {
@@ -1091,74 +1116,6 @@
       );
     }
 
-    function pairRows() {
-      return pairResult.performers.map((p) =>
-        React.createElement(
-          "tr",
-          { key: p.id },
-          React.createElement(
-            "td",
-            null,
-            p.name + (p.disambiguation ? " (" + p.disambiguation + ")" : "")
-          ),
-          React.createElement("td", null, p.gender),
-          React.createElement("td", null, p.birth_date),
-          React.createElement("td", null, p.scene_count),
-          fetchScenes
-            ? React.createElement(
-                "td",
-                null,
-                (p.scenes || []).map((sc) =>
-                  React.createElement(
-                    "div",
-                    { key: sc.id },
-                    React.createElement(
-                      "a",
-                      {
-                        href: siteUrl + "/scenes/" + sc.id,
-                        target: "_blank",
-                        rel: "noreferrer",
-                      },
-                      sc.title || "(untitled)"
-                    ),
-                    " ",
-                    React.createElement(
-                      "span",
-                      { className: "text-muted" },
-                      [sc.release_date, sc.studio && sc.studio.name]
-                        .filter(Boolean)
-                        .join(" - ")
-                    ),
-                    " ",
-                    scene
-                      ? React.createElement(LinkButton, {
-                          stashSceneId: sc.id,
-                          linkedStashId: linkedStashId,
-                          busyId: busyId,
-                          onSync: onSync,
-                        })
-                      : null
-                  )
-                )
-              )
-            : null,
-          React.createElement(
-            "td",
-            null,
-            React.createElement(
-              "a",
-              {
-                href: siteUrl + "/performers/" + p.id,
-                target: "_blank",
-                rel: "noreferrer",
-              },
-              "view"
-            )
-          )
-        )
-      );
-    }
-
     function resultsTable(headers, rows, caption) {
       return React.createElement(
         React.Fragment,
@@ -1240,7 +1197,7 @@
                 { value: "scenes", label: "Scenes (queryScenes)" },
                 {
                   value: "pairings",
-                  label: "Pairings - who else worked with a performer",
+                  label: "Pairings - scenes with a co-performer",
                 },
               ]
             ),
@@ -1263,23 +1220,13 @@
         ? React.createElement(Alert, { variant: "danger", className: "mt-3" }, error)
         : null,
 
-      pairResult
-        ? resultsTable(
-            ["Name", "Gender", "Born", "Scenes"]
-              .concat(fetchScenes ? ["Shared scenes"] : [])
-              .concat([""]),
-            pairRows,
-            pairResult.count + " performers have worked with " + (anchorName || "")
-          )
-        : null,
-
       sceneResult
         ? resultsTable(
             ["Title", "Date", "Code", "Studio", "Performers", ""].concat(
               scene ? [""] : []
             ),
             sceneRows,
-            sceneResult.count + " total matches on stash-box"
+            resultNote || sceneResult.count + " total matches on stash-box"
           )
         : null
     );

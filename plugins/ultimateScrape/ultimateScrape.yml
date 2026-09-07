@@ -1,6 +1,6 @@
 name: Ultimate Scrape
 description: Search a configured stash-box with the filters Stash does not expose - title, code, url, date, performers, tags, studio, plus performer pairings - and scrape a result onto the scene
-version: 0.3
+version: 0.4
 ui:
   javascript:
     - ultimateScrape.js
