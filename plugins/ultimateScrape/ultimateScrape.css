@@ -4,25 +4,7 @@
 }
 
 .ultimate-scrape-form {
-  max-width: 500px;
-}
-
-.ultimate-scrape-row {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.ultimate-scrape-row > * {
-  flex: 1;
-}
-
-.ultimate-scrape-row .form-label {
-  flex-basis: 100%;
-}
-
-.ultimate-scrape-checklist {
-  max-height: 12rem;
-  overflow-y: auto;
+  max-width: 48rem;
 }
 
 /* The modal body supplies its own padding, and the form should use its width. */
@@ -33,4 +15,82 @@
 
 .ultimate-scrape-modal .ultimate-scrape-form {
   max-width: none;
+}
+
+.ultimate-scrape-row {
+  display: grid;
+  grid-template-columns: minmax(9rem, 13rem) minmax(0, 1fr);
+  gap: 0.45rem 1rem;
+  align-items: center;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.ultimate-scrape-row.is-tall {
+  align-items: start;
+}
+
+.ultimate-scrape-row.is-off .ultimate-scrape-row-value {
+  opacity: 0.45;
+}
+
+.ultimate-scrape-row-label .custom-switch {
+  margin-bottom: 0;
+  padding-top: 0.15rem;
+}
+
+.ultimate-scrape-row-label .custom-control-label,
+.ultimate-scrape-row-heading {
+  font-weight: 600;
+}
+
+.ultimate-scrape-row-heading {
+  padding-top: 0.2rem;
+}
+
+.ultimate-scrape-row-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ultimate-scrape-row-value > .text-input {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+  width: auto;
+}
+
+.ultimate-scrape-row-value > .input-control {
+  flex: 0 1 12rem;
+  min-width: 9rem;
+  width: 12rem;
+  max-width: 100%;
+}
+
+.ultimate-scrape-row-value > .input-control.ultimate-scrape-wide,
+.ultimate-scrape-row-value > .text-input.ultimate-scrape-wide {
+  flex: 1 1 100%;
+  min-width: 0;
+  width: auto;
+}
+
+.ultimate-scrape-row-value > .ultimate-scrape-checklist {
+  flex: 1 1 100%;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+.ultimate-scrape-limit {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+}
+
+.ultimate-scrape-limit .text-input {
+  width: 5rem;
+  flex: 0 0 5rem;
+  min-width: 5rem;
 }

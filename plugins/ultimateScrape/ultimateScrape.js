@@ -23,6 +23,8 @@
   const { faSearch } = PluginApi.libraries.FontAwesomeSolid;
 
   const ROUTE = "/plugins/ultimate-scrape";
+  const SEARCH_FORM_ID = "ultimate-scrape-form";
+  const URL_CUSTOM = "__custom__";
   const LOG = "[UltimateScrape]";
 
   // Criterion modifiers, per stash-box's CriterionModifier enum.
@@ -58,6 +60,15 @@
     "NON_BINARY",
     "UNKNOWN",
   ];
+  const MODIFIER_LABELS = {
+    EQUALS: "equals",
+    NOT_EQUALS: "not equals",
+    INCLUDES: "includes",
+    EXCLUDES: "excludes",
+    INCLUDES_ALL: "includes all",
+    GREATER_THAN: "after",
+    LESS_THAN: "before",
+  };
 
   const QUERY_SCENES = `
     query PluginQueryScenes($input: SceneQueryInput!) {
@@ -223,17 +234,43 @@
   //    which is left at Bootstrap's light default. Without them the values are
   //    dark-on-dark and effectively invisible.
 
+  function prettyEnum(value) {
+    return value
+      .toLowerCase()
+      .split("_")
+      .map(function (word) {
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .join(" ");
+  }
+
+  function modifierOptions(modifiers) {
+    return modifiers.map(function (m) {
+      return { value: m, label: MODIFIER_LABELS[m] || prettyEnum(m) };
+    });
+  }
+
+  function enumOptions(values) {
+    return values.map(function (v) {
+      return { value: v, label: prettyEnum(v) };
+    });
+  }
+
   function textInput(props) {
+    const className = ["text-input", props.className].filter(Boolean).join(" ");
     return React.createElement(
       Form.Control,
-      Object.assign({ className: "text-input" }, props)
+      Object.assign({}, props, { className: className })
     );
   }
 
   function selectInput(props, values) {
+    const className = ["input-control", props.className]
+      .filter(Boolean)
+      .join(" ");
     return React.createElement(
       Form.Control,
-      Object.assign({ className: "input-control", as: "select" }, props),
+      Object.assign({}, props, { className: className, as: "select" }),
       values.map((v) => {
         const value = typeof v === "string" ? v : v.value;
         const label = typeof v === "string" ? v : v.label;
@@ -242,38 +279,86 @@
     );
   }
 
-  function formGroup(className, children) {
+  function SearchSubmitButton(props) {
     return React.createElement(
-      Form.Group,
-      { className: className },
-      children
+      Button,
+      {
+        type: "submit",
+        form: SEARCH_FORM_ID,
+        variant: "primary",
+        className: props.className,
+        disabled: props.disabled,
+      },
+      React.createElement(PluginApi.components.Icon, { icon: faSearch }),
+      " ",
+      props.loading ? "Searching..." : "Search"
     );
   }
 
-  function label(text) {
-    return React.createElement(Form.Label, null, text);
+  // Two-column row: label (optional switch) on the left, controls on the right.
+  // A switch keeps the value while off so a prefilled title does not have to
+  // be deleted to drop it from the query.
+  function fieldRow(props, children) {
+    const hasToggle = typeof props.onToggle === "function";
+    return React.createElement(
+      "div",
+      {
+        key: props.id,
+        className:
+          "ultimate-scrape-row" +
+          (hasToggle && !props.enabled ? " is-off" : "") +
+          (props.tall ? " is-tall" : ""),
+      },
+      React.createElement(
+        "div",
+        { className: "ultimate-scrape-row-label" },
+        hasToggle
+          ? React.createElement(Form.Check, {
+              type: "switch",
+              id: props.id,
+              label: props.label,
+              checked: !!props.enabled && !props.unavailable,
+              disabled: !!props.unavailable,
+              title: props.title,
+              onChange: function () {
+                if (!props.unavailable) props.onToggle();
+              },
+            })
+          : React.createElement(
+              "div",
+              { className: "ultimate-scrape-row-heading" },
+              props.label
+            )
+      ),
+      React.createElement("div", { className: "ultimate-scrape-row-value" }, children)
+    );
   }
 
   function muted(text) {
     return React.createElement("div", { className: "text-muted" }, text);
   }
 
-  // Checkbox list for an ID-based criterion. Entities with no id on this
+  // Checkbox list for an ID-based criterion. Entries with no id on this
   // stash-box are shown disabled rather than hidden, so it is obvious why they
-  // cannot be filtered on.
+  // cannot be filtered on, and they are listed after the ones that can.
   function IdCheckList(props) {
+    const options = props.options.slice().sort(function (a, b) {
+      if (!!a.stashId !== !!b.stashId) return a.stashId ? -1 : 1;
+      return (a.name || "").localeCompare(b.name || "");
+    });
     return React.createElement(
       "div",
       { className: "ultimate-scrape-checklist" },
-      props.options.map((o) =>
+      options.map((o) =>
         React.createElement(Form.Check, {
           key: o.stashId || o.name,
           type: "checkbox",
           id: props.idPrefix + "-" + (o.stashId || o.name),
           label: o.stashId ? o.name : o.name + " (no id on this stash-box)",
-          disabled: !o.stashId,
+          disabled: !o.stashId || props.disabled,
           checked: !!o.stashId && props.isChecked(o.stashId),
-          onChange: () => o.stashId && props.onToggle(o.stashId),
+          onChange: () =>
+            o.stashId && !props.disabled && props.onToggle(o.stashId),
         })
       )
     );
@@ -354,7 +439,9 @@
   //
   // Shared by the standalone page and the scene-page modal. Given a scene it
   // seeds itself from it: title, a dropdown of its urls, and the stash-box ids
-  // of its performers, tags and studio.
+  // of its performers, tags and studio. Prefill is not the same as "use this
+  // in the query" - switched filters start off so a local title that does not
+  // exist on stash-box is not silently narrowing the results.
   function SearchPanel(props) {
     const scene = props.scene;
     const box = useStashBox();
@@ -388,13 +475,21 @@
     const [sort, setSort] = React.useState("DATE");
     const [direction, setDirection] = React.useState("DESC");
 
-    // Performers are opt-out (all in until unticked); tags are opt-in, since a
-    // scene carries many and requiring all of them matches nothing.
-    const [excludedPerformers, setExcludedPerformers] = React.useState([]);
+    // Switched filters start off even when prefilled. Flip the switch to send
+    // them. Performers and tags have no switch: tick the ones to include.
+    const [useTitle, setUseTitle] = React.useState(false);
+    const [useCode, setUseCode] = React.useState(false);
+    const [useUrl, setUseUrl] = React.useState(false);
+    const [useDate, setUseDate] = React.useState(false);
+    const [useStudio, setUseStudio] = React.useState(false);
+    const [urlCustom, setUrlCustom] = React.useState(false);
+
+    // Performers and tags are opt-in. Tick to add them to the query; none
+    // ticked means that criterion is omitted.
+    const [includedPerformers, setIncludedPerformers] = React.useState([]);
     const [performerModifier, setPerformerModifier] = React.useState("INCLUDES_ALL");
     const [includedTags, setIncludedTags] = React.useState([]);
     const [tagModifier, setTagModifier] = React.useState("INCLUDES_ALL");
-    const [useStudio, setUseStudio] = React.useState(false);
 
     const [anchorOverride, setAnchorOverride] = React.useState("");
     const [coName, setCoName] = React.useState("");
@@ -439,22 +534,28 @@
 
     const selectedPerformerIds = performerOptions
       .map((p) => p.stashId)
-      .filter((id) => id && !excludedPerformers.includes(id));
+      .filter((id) => id && includedPerformers.includes(id));
     const selectedTagIds = tagOptions
       .map((t) => t.stashId)
       .filter((id) => id && includedTags.includes(id));
 
     function buildSceneInput() {
+      // stash-box paginates, but this UI only ever asks for page 1. per_page
+      // is a result cap, not a pager.
       const input = {
         page: 1,
         per_page: perPage,
         sort: sort,
         direction: direction,
       };
-      if (title.trim()) input.title = title.trim();
-      if (code.trim()) input.code = { value: code.trim(), modifier: codeModifier };
-      if (url.trim()) input.url = url.trim();
-      if (date.trim()) input.date = { value: date.trim(), modifier: dateModifier };
+      if (useTitle && title.trim()) input.title = title.trim();
+      if (useCode && code.trim()) {
+        input.code = { value: code.trim(), modifier: codeModifier };
+      }
+      if (useUrl && url.trim()) input.url = url.trim();
+      if (useDate && date.trim()) {
+        input.date = { value: date.trim(), modifier: dateModifier };
+      }
       if (selectedPerformerIds.length) {
         input.performers = {
           value: selectedPerformerIds,
@@ -585,6 +686,18 @@
       }
     }
 
+    React.useEffect(
+      function () {
+        if (!props.onSearchStateChange) return undefined;
+        const blocked = mode === "pairings" && !anchorId;
+        props.onSearchStateChange({ loading: loading, blocked: blocked });
+        return function () {
+          props.onSearchStateChange({ loading: false, blocked: false });
+        };
+      },
+      [loading, mode, anchorId, props.onSearchStateChange]
+    );
+
     if (!box) {
       return React.createElement(
         Alert,
@@ -594,235 +707,345 @@
       );
     }
 
+    function limitControl(key) {
+      return React.createElement(
+        "div",
+        { key: key, className: "ultimate-scrape-limit" },
+        React.createElement("span", { className: "text-muted" }, "Limit"),
+        textInput({
+          key: key + "-n",
+          type: "number",
+          min: 1,
+          max: 100,
+          title: "Maximum results to fetch. There is no next page.",
+          value: perPage,
+          onChange: (e) => setPerPage(Number(e.target.value)),
+        })
+      );
+    }
+
+    function urlSelectValue() {
+      if (urlCustom) return URL_CUSTOM;
+      if (sceneUrls.includes(url)) return url;
+      if (url) return URL_CUSTOM;
+      return "";
+    }
+
+    function showUrlCustom() {
+      return !sceneUrls.length || urlSelectValue() === URL_CUSTOM;
+    }
+
     const modeFields =
       mode === "pairings"
         ? [
-            formGroup("mb-2", [
-              label("Performer"),
-              performerOptions.some((p) => p.stashId)
-                ? selectInput(
-                    {
-                      key: "anchor",
-                      value: anchorId,
-                      onChange: (e) => setAnchorOverride(e.target.value),
-                    },
-                    performerOptions
-                      .filter((p) => p.stashId)
-                      .map((p) => ({ value: p.stashId, label: p.name }))
-                  )
-                : muted(
-                    "Pairings needs a performer with an id on this stash-box. " +
-                      "Open this from a scene whose performers are matched."
-                  ),
-            ]),
-            formGroup("mb-2", [
-              label("Co-performer name contains"),
-              textInput({
-                key: "coname",
-                value: coName,
-                placeholder: "optional",
-                onChange: (e) => setCoName(e.target.value),
-              }),
-            ]),
-            formGroup("mb-2 ultimate-scrape-row", [
-              label("Gender"),
-              selectInput(
-                {
-                  key: "gender",
-                  value: gender,
-                  onChange: (e) => setGender(e.target.value),
-                },
-                GENDERS.map((g) => ({ value: g, label: g || "(any)" }))
-              ),
-              selectInput(
-                {
-                  key: "psort",
-                  value: performerSort,
-                  onChange: (e) => setPerformerSort(e.target.value),
-                },
-                PERFORMER_SORTS
-              ),
-              selectInput(
-                {
-                  key: "pdir",
-                  value: direction,
-                  onChange: (e) => setDirection(e.target.value),
-                },
-                ["ASC", "DESC"]
-              ),
-              textInput({
-                key: "pper",
-                type: "number",
-                min: 1,
-                max: 100,
-                value: perPage,
-                onChange: (e) => setPerPage(Number(e.target.value)),
-              }),
-            ]),
-            formGroup("mb-2", [
-              React.createElement(Form.Check, {
-                key: "fetchscenes",
-                type: "checkbox",
-                id: "ultimate-scrape-fetch-scenes",
-                label: "List the scenes they share",
-                checked: fetchScenes,
-                onChange: () => setFetchScenes(!fetchScenes),
-              }),
-            ]),
+            fieldRow(
+              { id: "ultimate-scrape-anchor", label: "Performer" },
+              [
+                performerOptions.some((p) => p.stashId)
+                  ? selectInput(
+                      {
+                        key: "anchor",
+                        className: "ultimate-scrape-wide",
+                        value: anchorId,
+                        onChange: (e) => setAnchorOverride(e.target.value),
+                      },
+                      performerOptions
+                        .filter((p) => p.stashId)
+                        .map((p) => ({ value: p.stashId, label: p.name }))
+                    )
+                  : muted(
+                      "Pairings needs a performer with an id on this stash-box. " +
+                        "Open this from a scene whose performers are matched."
+                    ),
+              ]
+            ),
+            fieldRow(
+              { id: "ultimate-scrape-coname", label: "Co-performer name" },
+              [
+                textInput({
+                  key: "coname",
+                  value: coName,
+                  placeholder: "optional",
+                  onChange: (e) => setCoName(e.target.value),
+                }),
+              ]
+            ),
+            fieldRow(
+              { id: "ultimate-scrape-gender", label: "Gender" },
+              [
+                selectInput(
+                  {
+                    key: "gender",
+                    value: gender,
+                    onChange: (e) => setGender(e.target.value),
+                  },
+                  GENDERS.map((g) => ({
+                    value: g,
+                    label: g ? prettyEnum(g) : "(any)",
+                  }))
+                ),
+              ]
+            ),
+            fieldRow(
+              {
+                id: "ultimate-scrape-fetch-scenes-row",
+                label: "Shared scenes",
+              },
+              [
+                React.createElement(Form.Check, {
+                  key: "fetchscenes",
+                  type: "checkbox",
+                  id: "ultimate-scrape-fetch-scenes",
+                  label: "List the scenes they share",
+                  checked: fetchScenes,
+                  onChange: () => setFetchScenes(!fetchScenes),
+                }),
+              ]
+            ),
+            fieldRow(
+              { id: "ultimate-scrape-psort", label: "Sort" },
+              [
+                selectInput(
+                  {
+                    key: "psort",
+                    value: performerSort,
+                    onChange: (e) => setPerformerSort(e.target.value),
+                  },
+                  enumOptions(PERFORMER_SORTS)
+                ),
+                selectInput(
+                  {
+                    key: "pdir",
+                    value: direction,
+                    onChange: (e) => setDirection(e.target.value),
+                  },
+                  enumOptions(["ASC", "DESC"])
+                ),
+                limitControl("pper"),
+              ]
+            ),
           ]
         : [
-            formGroup("mb-2", [
-              label("Title contains"),
-              textInput({
-                key: "title",
-                value: title,
-                placeholder: "e.g. a performer name or scene title",
-                onChange: (e) => setTitle(e.target.value),
-              }),
-            ]),
-            formGroup("mb-2 ultimate-scrape-row", [
-              label("Code"),
-              textInput({
-                key: "code",
-                value: code,
-                onChange: (e) => setCode(e.target.value),
-              }),
-              selectInput(
-                {
-                  key: "codemod",
-                  value: codeModifier,
-                  onChange: (e) => setCodeModifier(e.target.value),
-                },
-                STRING_MODIFIERS
-              ),
-            ]),
-            formGroup("mb-2", [
-              label("URL contains"),
-              sceneUrls.length
-                ? selectInput(
-                    {
-                      key: "urlpick",
-                      className: "input-control mb-1",
-                      value: sceneUrls.includes(url) ? url : "",
-                      onChange: (e) => setUrl(e.target.value),
-                    },
-                    [{ value: "", label: "(scene urls...)" }].concat(
-                      sceneUrls.map((u) => ({ value: u, label: u }))
-                    )
-                  )
-                : null,
-              textInput({
-                key: "url",
-                value: url,
-                onChange: (e) => setUrl(e.target.value),
-              }),
-            ]),
-            formGroup("mb-2 ultimate-scrape-row", [
-              label("Date (YYYY-MM-DD)"),
-              textInput({
-                key: "date",
-                value: date,
-                placeholder: "2020-01-01",
-                onChange: (e) => setDate(e.target.value),
-              }),
-              selectInput(
-                {
-                  key: "datemod",
-                  value: dateModifier,
-                  onChange: (e) => setDateModifier(e.target.value),
-                },
-                ["EQUALS", "GREATER_THAN", "LESS_THAN"]
-              ),
-            ]),
-            formGroup("mb-2 ultimate-scrape-row", [
-              label("Sort"),
-              selectInput(
-                { key: "sort", value: sort, onChange: (e) => setSort(e.target.value) },
-                SCENE_SORTS
-              ),
-              selectInput(
-                {
-                  key: "dir",
-                  value: direction,
-                  onChange: (e) => setDirection(e.target.value),
-                },
-                ["ASC", "DESC"]
-              ),
-              textInput({
-                key: "per",
-                type: "number",
-                min: 1,
-                max: 100,
-                value: perPage,
-                onChange: (e) => setPerPage(Number(e.target.value)),
-              }),
-            ]),
-            scene
-              ? formGroup("mb-2", [
-                  label("Performers"),
-                  performerOptions.length
-                    ? React.createElement(IdCheckList, {
-                        key: "perfs",
-                        idPrefix: "ultimate-scrape-perf",
-                        options: performerOptions,
-                        isChecked: (id) => !excludedPerformers.includes(id),
-                        onToggle: (id) =>
-                          setExcludedPerformers(toggleIn(excludedPerformers, id)),
-                      })
-                    : muted("No performers are tagged on this scene."),
-                  performerOptions.length
-                    ? selectInput(
-                        {
-                          key: "perfmod",
-                          className: "input-control mt-1",
-                          value: performerModifier,
-                          onChange: (e) => setPerformerModifier(e.target.value),
+            fieldRow(
+              {
+                id: "ultimate-scrape-use-title",
+                label: "Title contains",
+                enabled: useTitle,
+                onToggle: () => setUseTitle(!useTitle),
+              },
+              [
+                textInput({
+                  key: "title",
+                  value: title,
+                  disabled: !useTitle,
+                  placeholder: "e.g. a performer name or scene title",
+                  onChange: (e) => setTitle(e.target.value),
+                }),
+              ]
+            ),
+            fieldRow(
+              {
+                id: "ultimate-scrape-use-code",
+                label: "Studio code",
+                enabled: useCode,
+                onToggle: () => setUseCode(!useCode),
+              },
+              [
+                textInput({
+                  key: "code",
+                  value: code,
+                  disabled: !useCode,
+                  placeholder: "studio catalog number",
+                  onChange: (e) => setCode(e.target.value),
+                }),
+                selectInput(
+                  {
+                    key: "codemod",
+                    value: codeModifier,
+                    disabled: !useCode,
+                    onChange: (e) => setCodeModifier(e.target.value),
+                  },
+                  modifierOptions(STRING_MODIFIERS)
+                ),
+              ]
+            ),
+            fieldRow(
+              {
+                id: "ultimate-scrape-use-url",
+                label: "URL",
+                enabled: useUrl,
+                onToggle: () => setUseUrl(!useUrl),
+              },
+              [
+                sceneUrls.length
+                  ? selectInput(
+                      {
+                        key: "urlpick",
+                        className: "ultimate-scrape-wide",
+                        value: urlSelectValue(),
+                        disabled: !useUrl,
+                        onChange: function (e) {
+                          const v = e.target.value;
+                          if (v === URL_CUSTOM) {
+                            setUrlCustom(true);
+                            if (sceneUrls.includes(url)) setUrl("");
+                          } else {
+                            setUrlCustom(false);
+                            setUrl(v);
+                          }
                         },
-                        ID_MODIFIERS
-                      )
-                    : null,
-                ])
+                      },
+                      [{ value: "", label: "(none)" }]
+                        .concat(
+                          sceneUrls.map((u) => ({ value: u, label: u }))
+                        )
+                        .concat([{ value: URL_CUSTOM, label: "Custom…" }])
+                    )
+                  : null,
+                showUrlCustom()
+                  ? textInput({
+                      key: "url",
+                      className: "ultimate-scrape-wide",
+                      value: sceneUrls.includes(url) ? "" : url,
+                      disabled: !useUrl,
+                      placeholder: "https://…",
+                      onChange: function (e) {
+                        setUrlCustom(true);
+                        setUrl(e.target.value);
+                      },
+                    })
+                  : null,
+              ]
+            ),
+            fieldRow(
+              {
+                id: "ultimate-scrape-use-date",
+                label: "Date",
+                enabled: useDate,
+                onToggle: () => setUseDate(!useDate),
+              },
+              [
+                textInput({
+                  key: "date",
+                  value: date,
+                  disabled: !useDate,
+                  placeholder: "YYYY-MM-DD",
+                  onChange: (e) => setDate(e.target.value),
+                }),
+                selectInput(
+                  {
+                    key: "datemod",
+                    value: dateModifier,
+                    disabled: !useDate,
+                    onChange: (e) => setDateModifier(e.target.value),
+                  },
+                  modifierOptions(["EQUALS", "GREATER_THAN", "LESS_THAN"])
+                ),
+              ]
+            ),
+            scene
+              ? fieldRow(
+                  {
+                    id: "ultimate-scrape-performers",
+                    label: "Performers",
+                    tall: true,
+                  },
+                  performerOptions.length
+                    ? [
+                        React.createElement(IdCheckList, {
+                          key: "perfs",
+                          idPrefix: "ultimate-scrape-perf",
+                          options: performerOptions,
+                          isChecked: (id) => includedPerformers.includes(id),
+                          onToggle: (id) =>
+                            setIncludedPerformers(
+                              toggleIn(includedPerformers, id)
+                            ),
+                        }),
+                        selectInput(
+                          {
+                            key: "perfmod",
+                            value: performerModifier,
+                            onChange: (e) => setPerformerModifier(e.target.value),
+                          },
+                          modifierOptions(ID_MODIFIERS)
+                        ),
+                      ]
+                    : [muted("No performers are tagged on this scene.")]
+                )
               : null,
             scene
-              ? formGroup("mb-2", [
-                  label("Tags"),
+              ? fieldRow(
+                  {
+                    id: "ultimate-scrape-tags",
+                    label: "Tags",
+                    tall: true,
+                  },
                   tagOptions.length
-                    ? React.createElement(IdCheckList, {
-                        key: "tags",
-                        idPrefix: "ultimate-scrape-tag",
-                        options: tagOptions,
-                        isChecked: (id) => includedTags.includes(id),
-                        onToggle: (id) => setIncludedTags(toggleIn(includedTags, id)),
-                      })
-                    : muted("No tags are set on this scene."),
-                  tagOptions.length
-                    ? selectInput(
-                        {
-                          key: "tagmod",
-                          className: "input-control mt-1",
-                          value: tagModifier,
-                          onChange: (e) => setTagModifier(e.target.value),
-                        },
-                        ID_MODIFIERS
-                      )
-                    : null,
-                ])
+                    ? [
+                        React.createElement(IdCheckList, {
+                          key: "tags",
+                          idPrefix: "ultimate-scrape-tag",
+                          options: tagOptions,
+                          isChecked: (id) => includedTags.includes(id),
+                          onToggle: (id) =>
+                            setIncludedTags(toggleIn(includedTags, id)),
+                        }),
+                        selectInput(
+                          {
+                            key: "tagmod",
+                            value: tagModifier,
+                            onChange: (e) => setTagModifier(e.target.value),
+                          },
+                          modifierOptions(ID_MODIFIERS)
+                        ),
+                      ]
+                    : [muted("No tags are set on this scene.")]
+                )
               : null,
             scene && scene.studio
-              ? formGroup("mb-2", [
-                  React.createElement(Form.Check, {
-                    key: "studio",
-                    type: "checkbox",
-                    id: "ultimate-scrape-studio",
-                    label: studioStashId
-                      ? "Limit to studio: " + scene.studio.name
-                      : "Studio " + scene.studio.name + " has no id on this stash-box",
-                    disabled: !studioStashId,
-                    checked: useStudio && !!studioStashId,
-                    onChange: () => setUseStudio(!useStudio),
-                  }),
-                ])
+              ? fieldRow(
+                  {
+                    id: "ultimate-scrape-use-studio",
+                    label: "Studio",
+                    enabled: useStudio,
+                    unavailable: !studioStashId,
+                    title: studioStashId
+                      ? undefined
+                      : scene.studio.name + " has no id on this stash-box",
+                    onToggle: () => setUseStudio(!useStudio),
+                  },
+                  [
+                    muted(
+                      studioStashId
+                        ? scene.studio.name
+                        : scene.studio.name + " has no id on this stash-box"
+                    ),
+                  ]
+                )
               : null,
+            fieldRow(
+              { id: "ultimate-scrape-sort", label: "Sort" },
+              [
+                selectInput(
+                  {
+                    key: "sort",
+                    value: sort,
+                    onChange: (e) => setSort(e.target.value),
+                  },
+                  enumOptions(SCENE_SORTS)
+                ),
+                selectInput(
+                  {
+                    key: "dir",
+                    value: direction,
+                    onChange: (e) => setDirection(e.target.value),
+                  },
+                  enumOptions(["ASC", "DESC"])
+                ),
+                limitControl("per"),
+              ]
+            ),
           ];
 
     function sceneRows() {
@@ -992,37 +1215,45 @@
         { className: "text-muted" },
         "Querying ",
         React.createElement("code", null, box.name || box.endpoint),
-        " directly - filters, pagination and sort that Stash's own stash-box " +
+        " directly - filters, sort and a result limit that Stash's own stash-box " +
           "search does not expose."
       ),
 
       React.createElement(
         Form,
-        { onSubmit: onSearch, className: "ultimate-scrape-form" },
-        formGroup("mb-3 ultimate-scrape-row", [
-          label("Search"),
-          selectInput(
-            { key: "mode", value: mode, onChange: (e) => setMode(e.target.value) },
-            [
-              { value: "scenes", label: "Scenes (queryScenes)" },
+        {
+          id: SEARCH_FORM_ID,
+          onSubmit: onSearch,
+          className: "ultimate-scrape-form",
+        },
+        fieldRow(
+          { id: "ultimate-scrape-mode", label: "Search" },
+          [
+            selectInput(
               {
-                value: "pairings",
-                label: "Pairings - who else worked with a performer",
+                key: "mode",
+                className: "ultimate-scrape-wide",
+                value: mode,
+                onChange: (e) => setMode(e.target.value),
               },
-            ]
-          ),
-        ]),
+              [
+                { value: "scenes", label: "Scenes (queryScenes)" },
+                {
+                  value: "pairings",
+                  label: "Pairings - who else worked with a performer",
+                },
+              ]
+            ),
+          ]
+        ),
         modeFields,
-        React.createElement(
-          Button,
-          {
-            type: "submit",
-            disabled: loading || (mode === "pairings" && !anchorId),
-          },
-          React.createElement(PluginApi.components.Icon, { icon: faSearch }),
-          " ",
-          loading ? "Searching..." : "Search"
-        )
+        props.externalSubmit
+          ? null
+          : React.createElement(SearchSubmitButton, {
+              className: "mt-3",
+              loading: loading,
+              disabled: loading || (mode === "pairings" && !anchorId),
+            })
       ),
 
       loading
@@ -1071,6 +1302,12 @@
   // callback is not a component and must not use hooks.
   function SceneSearchModalButton(props) {
     const [show, setShow] = React.useState(false);
+    const [searchLoading, setSearchLoading] = React.useState(false);
+    const [searchBlocked, setSearchBlocked] = React.useState(false);
+    const onSearchStateChange = React.useCallback(function (state) {
+      setSearchLoading(state.loading);
+      setSearchBlocked(state.blocked);
+    }, []);
 
     return React.createElement(
       React.Fragment,
@@ -1107,16 +1344,19 @@
           Modal.Body,
           { className: "ultimate-scrape-page" },
           // Mounted only while open, so reopening re-seeds from the scene.
-          show ? React.createElement(SearchPanel, { scene: props.scene }) : null
+          show ? React.createElement(SearchPanel, {
+            scene: props.scene,
+            externalSubmit: true,
+            onSearchStateChange: onSearchStateChange,
+          }) : null
         ),
         React.createElement(
           Modal.Footer,
           null,
-          React.createElement(
-            Button,
-            { variant: "secondary", onClick: () => setShow(false) },
-            "Close"
-          )
+          React.createElement(SearchSubmitButton, {
+            loading: searchLoading,
+            disabled: searchLoading || searchBlocked,
+          })
         )
       )
     );
