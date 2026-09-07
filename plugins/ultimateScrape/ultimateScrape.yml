@@ -1,0 +1,18 @@
+name: Ultimate Scrape
+description: Search a configured stash-box with the filters Stash does not expose - title, code, url, date, performers, tags, studio, plus performer pairings - and scrape a result onto the scene
+version: 0.1
+ui:
+  javascript:
+    - ultimateScrape.js
+  css:
+    - ultimateScrape.css
+  # The plugin calls the stash-box endpoint directly from the browser, and
+  # Stash serves a restrictive Content-Security-Policy. A host not listed here
+  # is blocked with no visible error, so add yours if it is missing.
+  csp:
+    connect-src:
+      - https://stashdb.org
+      - https://theporndb.net
+      - https://fansdb.cc
+      - https://pmvstash.org
+      - https://javstash.org

@@ -1,0 +1,36 @@
+.ultimate-scrape-page {
+  max-width: 900px;
+  padding: 2rem;
+}
+
+.ultimate-scrape-form {
+  max-width: 500px;
+}
+
+.ultimate-scrape-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.ultimate-scrape-row > * {
+  flex: 1;
+}
+
+.ultimate-scrape-row .form-label {
+  flex-basis: 100%;
+}
+
+.ultimate-scrape-checklist {
+  max-height: 12rem;
+  overflow-y: auto;
+}
+
+/* The modal body supplies its own padding, and the form should use its width. */
+.ultimate-scrape-modal .ultimate-scrape-page {
+  max-width: none;
+  padding: 1rem;
+}
+
+.ultimate-scrape-modal .ultimate-scrape-form {
+  max-width: none;
+}
