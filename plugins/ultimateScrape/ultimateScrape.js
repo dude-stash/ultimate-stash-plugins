@@ -3,10 +3,11 @@
 // Stash's built-in stash-box integration only ever queries a scene by free
 // text (searchScene) or by file fingerprint (findScenesBySceneFingerprints).
 // Stash-box's own schema exposes far more: queryScenes(SceneQueryInput) filters
-// by title, code, url, date, performers, tags and studio, and queryPerformers
-// (performed_with) lists a performer's pairings. Pairings is flattened into
-// the scenes those people share, and a result can be synced onto the local
-// scene.
+// by text (title + details), title, code, url, date, performers, tags and
+// studio, and queryPerformers(performed_with) lists a performer's pairings.
+// Pairings is flattened into the scenes those people share, and a result can
+// be synced onto the local scene. Any configured stash-box can be queried
+// (StashDB, PornDB, FansDB, …), not just the first one.
 (function () {
   "use strict";
 
@@ -70,6 +71,7 @@
         scenes {
           id
           title
+          details
           release_date
           code
           duration
@@ -96,6 +98,7 @@
           scenes(input: { performed_with: $performedWith }) {
             id
             title
+            details
             release_date
             code
             duration
@@ -230,14 +233,30 @@
     return flattenPairingScenes(data.queryPerformers);
   }
 
-  function useStashBox() {
+  function useStashBoxes() {
     const { data } = GQL.useConfigurationQuery();
     return React.useMemo(() => {
-      const boxes =
+      return (
         (data && data.configuration && data.configuration.general.stashBoxes) ||
-        [];
-      return boxes[0];
+        []
+      );
     }, [data]);
+  }
+
+  function boxDisplayName(box, index) {
+    if (box && box.name) return box.name;
+    const endpoint = (box && box.endpoint) || "";
+    if (/theporndb|porndb|metadataapi/i.test(endpoint)) return "PornDB";
+    if (/stashdb/i.test(endpoint)) return "StashDB";
+    if (/fansdb/i.test(endpoint)) return "FansDB";
+    return "Stash-Box #" + (index + 1);
+  }
+
+  function findBoxByEndpoint(boxes, endpoint) {
+    const want = normaliseEndpoint(endpoint);
+    return (boxes || []).find(
+      (b) => normaliseEndpoint(b.endpoint) === want
+    );
   }
 
   // --- form control builders --------------------------------------------
@@ -463,7 +482,19 @@
   // exist on stash-box is not silently narrowing the results.
   function SearchPanel(props) {
     const scene = props.scene;
-    const box = useStashBox();
+    const boxes = useStashBoxes();
+
+    const defaultEndpoint = React.useMemo(() => {
+      if (!boxes.length) return "";
+      const linked = boxes.find((b) =>
+        findStashId(scene && scene.stash_ids, b.endpoint)
+      );
+      return (linked || boxes[0]).endpoint;
+    }, [boxes, scene]);
+
+    const [boxEndpoint, setBoxEndpoint] = React.useState("");
+    const box =
+      findBoxByEndpoint(boxes, boxEndpoint || defaultEndpoint) || boxes[0];
 
     const performerOptions = React.useMemo(
       () => (box ? toIdOptions(scene && scene.performers, box.endpoint) : []),
@@ -484,6 +515,7 @@
     const sceneUrls = (scene && scene.urls) || [];
 
     const [mode, setMode] = React.useState("scenes");
+    const [text, setText] = React.useState("");
     const [title, setTitle] = React.useState((scene && scene.title) || "");
     const [code, setCode] = React.useState("");
     const [codeModifier, setCodeModifier] = React.useState("INCLUDES");
@@ -496,6 +528,7 @@
 
     // Switched filters start off even when prefilled. Flip the switch to send
     // them. Performers and tags have no switch: tick the ones to include.
+    const [useText, setUseText] = React.useState(false);
     const [useTitle, setUseTitle] = React.useState(false);
     const [useCode, setUseCode] = React.useState(false);
     const [useUrl, setUseUrl] = React.useState(false);
@@ -565,6 +598,7 @@
         sort: sort,
         direction: direction,
       };
+      if (useText && text.trim()) input.text = text.trim();
       if (useTitle && title.trim()) input.title = title.trim();
       if (useCode && code.trim()) {
         input.code = { value: code.trim(), modifier: codeModifier };
@@ -636,7 +670,9 @@
           const result = await runQueryScenes(box, buildSceneInput());
           setSceneResult(result);
           setResultNote(
-            result.count + " total matches on stash-box"
+            result.count +
+              " total matches on " +
+              boxDisplayName(box, boxes.indexOf(box))
           );
         }
       } catch (err) {
@@ -744,7 +780,8 @@
         Alert,
         { variant: "warning" },
         "No stash-box instance is configured. Add one under Settings > " +
-          "Metadata Providers first - this plugin reuses that endpoint and API key."
+          "Metadata Providers first - this plugin reuses those endpoints and API keys. " +
+          "PornDB is a stash-box too (https://theporndb.net/graphql)."
       );
     }
 
@@ -851,6 +888,27 @@
             ),
           ]
         : [
+            fieldRow(
+              {
+                id: "ultimate-scrape-use-text",
+                label: "Free text",
+                enabled: useText,
+                onToggle: () => setUseText(!useText),
+                title:
+                  "stash-box text filter: matches title and description (details)",
+              },
+              [
+                textInput({
+                  key: "text",
+                  value: text,
+                  disabled: !useText,
+                  placeholder: "title and description",
+                  title:
+                    "Like SceneQueryInput.text - searches title and description, not title alone",
+                  onChange: (e) => setText(e.target.value),
+                }),
+              ]
+            ),
             fieldRow(
               {
                 id: "ultimate-scrape-use-title",
@@ -1078,7 +1136,7 @@
         React.createElement(
           "tr",
           { key: s.id },
-          React.createElement("td", null, s.title),
+          React.createElement("td", { title: s.details || undefined }, s.title),
           React.createElement("td", null, s.release_date),
           React.createElement("td", null, s.code),
           React.createElement("td", null, s.studio && s.studio.name),
@@ -1171,9 +1229,14 @@
         "p",
         { className: "text-muted" },
         "Querying ",
-        React.createElement("code", null, box.name || box.endpoint),
-        " directly - filters, sort and a result limit that Stash's own stash-box " +
-          "search does not expose."
+        React.createElement(
+          "code",
+          null,
+          boxDisplayName(box, boxes.indexOf(box))
+        ),
+        " directly. Free text uses stash-box ",
+        React.createElement("code", null, "text"),
+        " (title + description); title is title only. Switch Source to query PornDB or another configured stash-box."
       ),
 
       React.createElement(
@@ -1183,6 +1246,32 @@
           onSubmit: onSearch,
           className: "ultimate-scrape-form",
         },
+        fieldRow(
+          { id: "ultimate-scrape-box", label: "Source" },
+          [
+            selectInput(
+              {
+                key: "box",
+                className: "ultimate-scrape-wide",
+                value: box.endpoint,
+                onChange: function (e) {
+                  setBoxEndpoint(e.target.value);
+                  setSceneResult(undefined);
+                  setResultNote("");
+                  setError(undefined);
+                  setIncludedPerformers([]);
+                  setIncludedTags([]);
+                  setUseStudio(false);
+                  setAnchorOverride("");
+                },
+              },
+              boxes.map((b, i) => ({
+                value: b.endpoint,
+                label: boxDisplayName(b, i),
+              }))
+            ),
+          ]
+        ),
         fieldRow(
           { id: "ultimate-scrape-mode", label: "Search" },
           [
@@ -1226,7 +1315,10 @@
               scene ? [""] : []
             ),
             sceneRows,
-            resultNote || sceneResult.count + " total matches on stash-box"
+            resultNote ||
+              sceneResult.count +
+                " total matches on " +
+                boxDisplayName(box, boxes.indexOf(box))
           )
         : null
     );
