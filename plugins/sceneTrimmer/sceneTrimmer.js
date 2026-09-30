@@ -33,6 +33,12 @@
   const SCENE_INFO = gql(
     "query SceneTrimmerScene($id: ID!) { findScene(id: $id) { id files { id duration frame_rate } } }"
   );
+  const RUN_TASK = gql(
+    "mutation SceneTrimmerTask($id: ID!, $task: String!, $desc: String, $args: Map) { runPluginTask(plugin_id: $id, task_name: $task, description: $desc, args_map: $args) }"
+  );
+  const FIND_JOB = gql(
+    "query SceneTrimmerJob($id: ID!) { findJob(input: { id: $id }) { id status progress error } }"
+  );
   const SETTINGS = gql(
     'query SceneTrimmerSettings { configuration { plugins(include: ["sceneTrimmer"]) } }'
   );
@@ -51,6 +57,15 @@
       fetchPolicy: "no-cache",
     });
     return res.data.runPluginOperation;
+  }
+
+  async function findJob(id) {
+    const res = await client().query({
+      query: FIND_JOB,
+      variables: { id: id },
+      fetchPolicy: "no-cache",
+    });
+    return res.data.findJob;
   }
 
   async function fetchSceneInfo(sceneId) {
@@ -182,6 +197,9 @@
     confirm: null,
     flash: null,
     resumeOffered: false,
+    // Last export's state from the backend (see export_status in
+    // sceneTrimmer.py), plus the UI-only "queued" status and trim job id.
+    export: null,
   };
 
   const listeners = new Set();
@@ -361,6 +379,7 @@
       confirm: null,
       flash: null,
       resumeOffered: false,
+      export: null,
     });
   }
 
@@ -380,10 +399,12 @@
           return null;
         }),
         fetchDefaultMode(),
+        runOp({ mode: "export_status", scene_id: sceneId }).catch(() => null),
       ]);
       info = results[0];
       loaded = results[1];
       S.defaultMode = results[2];
+      S.export = results[3] && results[3].status !== "done" ? results[3] : null;
     } catch (err) {
       if (token !== loadToken) return;
       console.warn(LOG, "could not load scene", sceneId, err);
@@ -419,6 +440,7 @@
       flash("Trim ranges restored from the scene's backup copy.");
     }
     notify();
+    if (exportActive()) pollExport(sceneId);
   }
 
   // --- keyframes -------------------------------------------------------------
@@ -825,7 +847,7 @@
   // --- actions ---------------------------------------------------------------
 
   function canEdit() {
-    return !!P && S.loaded && !S.stale && !!S.rec;
+    return !!P && S.loaded && !S.stale && !!S.rec && !exportActive();
   }
 
   function markIn() {
@@ -939,6 +961,132 @@
     S.confirm = null;
     queueSave(null);
     notify();
+  }
+
+  // --- export (phase 2) -----------------------------------------------------
+  //
+  // The backend does the work as two queued Stash tasks: "Trim scene" cuts and
+  // joins the kept parts, then queues a scan of the new file and "Finalize
+  // trim", which attaches it to this scene. This only starts it and watches.
+
+  const EXPORT_ACTIVE = ["queued", "cutting", "joining", "scanning", "finalizing"];
+
+  function exportActive() {
+    return !!S.export && EXPORT_ACTIVE.indexOf(S.export.status) >= 0;
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function startExport() {
+    if (!canEdit() || !S.keep || !S.keep.length) return;
+    const sceneId = S.sceneId;
+    S.confirm = null;
+    S.export = { status: "queued", progress: 0 };
+    notify();
+    try {
+      // The task reads the saved record, so the latest edits must be in it.
+      rememberPosition();
+      queueSave();
+      await flushSaves();
+      if (pendingSaves.has(sceneId)) throw new Error("the ranges couldn't be saved");
+      const res = await client().mutate({
+        mutation: RUN_TASK,
+        variables: {
+          id: PLUGIN_ID,
+          task: "Trim scene",
+          desc: "Scene Trimmer: trim scene " + sceneId,
+          args: { scene_id: sceneId },
+        },
+        fetchPolicy: "no-cache",
+      });
+      if (S.sceneId !== sceneId) return;
+      S.export.trimJob = res.data.runPluginTask;
+      notify();
+      pollExport(sceneId);
+    } catch (err) {
+      console.warn(LOG, "could not start the trim", err);
+      if (S.sceneId !== sceneId) return;
+      S.export = { status: "error", message: String(err.message || err) };
+      notify();
+    }
+  }
+
+  let pollingScene = null;
+
+  async function pollExport(sceneId) {
+    if (pollingScene === sceneId) return;
+    pollingScene = sceneId;
+    try {
+      while (S.sceneId === sceneId && exportActive()) {
+        await sleep(1500);
+        if (S.sceneId !== sceneId) return;
+        try {
+          const trimJob = S.export.trimJob;
+          if (trimJob) {
+            // Before the task starts (and while it runs) the job queue is
+            // the only place that knows about it.
+            const job = await findJob(trimJob);
+            if (S.sceneId !== sceneId) return;
+            if (job && (job.status === "READY" || job.status === "RUNNING")) {
+              S.export.status = job.status === "READY" ? "queued" : "cutting";
+              S.export.progress = job.progress || 0;
+              notify();
+              continue;
+            }
+            S.export.trimJob = null;
+          }
+          const st = await runOp({ mode: "export_status", scene_id: sceneId });
+          if (S.sceneId !== sceneId) return;
+          if (!st) {
+            S.export = { status: "error", message: "The trim task didn't start." };
+          } else if (st.status === "done") {
+            S.export = st;
+            notify();
+            flash("Trimmed file added to the scene – reloading…");
+            await sleep(1500);
+            if (S.sceneId === sceneId) window.location.reload();
+            return;
+          } else {
+            S.export = Object.assign({}, st, { trimJob: S.export.trimJob });
+          }
+          notify();
+        } catch (err) {
+          console.warn(LOG, "could not check the trim", err);
+        }
+      }
+    } finally {
+      if (pollingScene === sceneId) pollingScene = null;
+    }
+  }
+
+  function dismissExport() {
+    const sceneId = S.sceneId;
+    S.export = null;
+    notify();
+    runOp({ mode: "export_clear", scene_id: sceneId }).catch((err) =>
+      console.warn(LOG, "could not clear the trim status", err)
+    );
+  }
+
+  function exportText() {
+    const e = S.export;
+    const pct = Math.round((e.progress || 0) * 100) + "%";
+    switch (e.status) {
+      case "queued":
+        return "Trim queued – waiting for other Stash tasks…";
+      case "cutting":
+        return "Creating trimmed file… " + pct;
+      case "joining":
+        return "Joining the parts… " + pct;
+      case "scanning":
+        return "Adding the new file to Stash…";
+      case "finalizing":
+        return "Adding the new file to this scene…";
+      default:
+        return null;
+    }
   }
 
   const HOTKEYS = {
@@ -1056,6 +1204,18 @@
         h("span", { key: "kf", className: "sceneTrimmer-muted" }, "Keyframes unavailable – ↑/↓ step 1 s")
       );
     }
+    if (exportActive()) {
+      items.push(h("span", { key: "export" }, exportText()));
+    } else if (S.export && S.export.status === "error") {
+      items.push(
+        h(
+          "span",
+          { key: "export", className: "sceneTrimmer-error" },
+          "Trim failed: " + (S.export.message || "unknown error") + " ",
+          btn("Dismiss", dismissExport, { key: "dismiss" })
+        )
+      );
+    }
     if (S.flash) items.push(h("span", { key: "flash" }, S.flash));
     const saveText = {
       saved: S.hasRecord ? "Saved" : "",
@@ -1096,6 +1256,30 @@
         ),
         btn("Convert", () => setMode(to, true), { active: true }),
         btn("Just switch", () => setMode(to, false)),
+        btn("Cancel", () => {
+          S.confirm = null;
+          notify();
+        })
+      );
+    } else if (S.confirm && S.confirm.kind === "export") {
+      confirm = h(
+        "div",
+        { className: "sceneTrimmer-confirm" },
+        h(
+          "div",
+          null,
+          "Create a new file with only the kept parts (" +
+            fmt(total(S.keep || []), false) +
+            " of " +
+            fmt(S.duration, false) +
+            ")? It's cut without re-encoding and becomes this scene's main file; the original file stays on the scene."
+        ),
+        h(
+          "div",
+          { className: "sceneTrimmer-muted" },
+          "Cuts land on keyframes, so a kept part can start a little before its In unless Snap was on."
+        ),
+        btn("Create trimmed file", startExport, { active: true }),
         btn("Cancel", () => {
           S.confirm = null;
           notify();
@@ -1169,7 +1353,22 @@
             S.confirm = { kind: "clear" };
             notify();
           },
-          { disabled: !rec.ranges.length && rec.pending_in == null }
+          { disabled: !canEdit() || (!rec.ranges.length && rec.pending_in == null) }
+        )
+      ),
+      h(
+        "div",
+        { className: "sceneTrimmer-row" },
+        btn(
+          "Create trimmed file…",
+          () => {
+            S.confirm = { kind: "export" };
+            notify();
+          },
+          {
+            disabled: !canEdit() || !S.keep || !S.keep.length || total(S.keep) >= S.duration - 0.1,
+            title: "Write a new file with only the kept parts, without re-encoding",
+          }
         )
       ),
       h(

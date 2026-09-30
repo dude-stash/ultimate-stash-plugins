@@ -11,6 +11,9 @@ Operations (args.mode):
   load       read a scene's trim record
   save       write (or with trim=null, delete) a scene's trim record
   keyframes  list the primary file's keyframe times via ffprobe
+  trim       (task) cut the kept parts into a new file with ffmpeg, no re-encode
+  finalize   (task) attach that file to the scene as its primary file
+  export_status / export_clear   read / dismiss the state of the last trim
 """
 
 import json
@@ -306,6 +309,407 @@ def op_keyframes(conn, stash, scene_id):
     return {"file_id": f["id"], "keyframes": times, "cached": False}
 
 
+# --- export: range math ------------------------------------------------------
+#
+# These mirror normalize/complement/keepSegments in sceneTrimmer.js; the UI and
+# the export must agree on what is kept.
+
+MIN_LEN = 0.1
+
+
+def normalize(ranges, duration):
+    out = []
+    for a, b in sorted([max(0.0, min(a, duration)), max(0.0, min(b, duration))] for a, b in ranges):
+        if b - a < MIN_LEN:
+            continue
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], b)
+        else:
+            out.append([a, b])
+    return out
+
+
+def complement(ranges, duration):
+    out, pos = [], 0.0
+    for a, b in ranges:
+        if a - pos >= MIN_LEN:
+            out.append([pos, a])
+        pos = max(pos, b)
+    if duration - pos >= MIN_LEN:
+        out.append([pos, duration])
+    return out
+
+
+def keep_segments(rec, duration):
+    if not rec or not rec["ranges"] or duration <= 0:
+        return []
+    marked = normalize(rec["ranges"], duration)
+    return complement(marked, duration) if rec["mode"] == "remove" else marked
+
+
+def remap_time(t, parts):
+    """Position of source time t in the trimmed file, or None if t was cut."""
+    for p in parts:
+        if p["src_start"] - 0.05 <= t < p["src_end"]:
+            return p["out_start"] + max(0.0, t - p["actual_start"])
+    return None
+
+
+def remap_marker(seconds, end_seconds, parts):
+    """(seconds, end_seconds) on the new timeline, or None to delete."""
+    start = remap_time(seconds, parts)
+    if start is None:
+        return None
+    if end_seconds is None:
+        return start, None
+    end = remap_time(end_seconds, parts)
+    if end is None:
+        # The end fell in a cut: stop at the end of the last kept part before it.
+        before = [p for p in parts if p["src_start"] < end_seconds]
+        end = before[-1]["out_start"] + before[-1]["out_dur"] if before else None
+    if end is None or end <= start:
+        return start, None
+    return start, end
+
+
+# --- export: state -----------------------------------------------------------
+#
+# Export progress lives in its own file next to the scene's trim record, so a
+# save from the UI can never overwrite it. The UI polls it via export_status.
+
+ACTIVE = ("cutting", "joining", "scanning", "finalizing")
+
+
+def export_path(conn, scene_id):
+    return os.path.join(data_dir(conn), "scenes", "%d.export.json" % scene_id)
+
+
+def now():
+    import time
+    return time.time()
+
+
+class Export:
+    def __init__(self, conn, scene_id, state=None):
+        self.path = export_path(conn, scene_id)
+        self.state = state or {}
+        self._last_write = 0.0
+
+    @classmethod
+    def load(cls, conn, scene_id):
+        return cls(conn, scene_id, read_json(export_path(conn, scene_id)))
+
+    def update(self, force=True, **fields):
+        self.state.update(fields)
+        self.state["updated"] = now()
+        # Progress ticks arrive several times a second; the UI only polls
+        # every ~1.5 s, so don't rewrite the file more often than that.
+        if force or now() - self._last_write > 1.0:
+            write_json(self.path, self.state)
+            self._last_write = now()
+
+
+def op_export_status(conn, scene_id):
+    exp = Export.load(conn, scene_id)
+    st = exp.state
+    if not st:
+        return None
+    # A crashed or cancelled task leaves its state behind. Cutting reports
+    # progress continuously; the later steps just wait in the job queue.
+    age = now() - (st.get("updated") or 0)
+    limit = 120 if st.get("status") in ("cutting", "joining") else 6 * 3600
+    if st.get("status") in ACTIVE and age > limit:
+        exp.update(status="error", message="The trim task stopped without finishing.")
+    return exp.state
+
+
+def op_export_clear(conn, scene_id):
+    try:
+        os.unlink(export_path(conn, scene_id))
+    except FileNotFoundError:
+        pass
+    return {"ok": True}
+
+
+def plugin_settings(stash):
+    try:
+        plugins = stash.call('{ configuration { plugins(include: ["sceneTrimmer"]) } }')[
+            "configuration"]["plugins"] or {}
+        return plugins.get("sceneTrimmer") or {}
+    except Exception as err:
+        log("w", "could not read plugin settings: %s" % err)
+        return {}
+
+
+# --- export: trim task -------------------------------------------------------
+
+def unique_output(src):
+    stem, ext = os.path.splitext(src)
+    candidate = "%s.trimmed%s" % (stem, ext)
+    n = 2
+    while os.path.exists(candidate):
+        candidate = "%s.trimmed-%d%s" % (stem, n, ext)
+        n += 1
+    return candidate
+
+
+def run_ffmpeg(cmd, on_time=None):
+    """Run ffmpeg with -progress on stdout, calling on_time(seconds)."""
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    for line in proc.stdout:
+        # out_time_us is microseconds (out_time_ms is too, despite its name).
+        if on_time and line.startswith("out_time_us="):
+            us = to_float(line.split("=", 1)[1])
+            if us is not None and us >= 0:
+                on_time(us / 1e6)
+    err = proc.stderr.read()
+    if proc.wait() != 0:
+        raise RuntimeError("ffmpeg failed: %s" % err.strip()[-800:])
+
+
+def probe_duration(ffprobe, path):
+    out = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", path],
+        capture_output=True, text=True, check=False,
+    )
+    d = to_float(out.stdout.strip())
+    if d is None:
+        raise RuntimeError("could not read the duration of %s" % path)
+    return d
+
+
+def concat_quote(path):
+    return "'" + path.replace("'", "'\\''") + "'"
+
+
+def op_trim(conn, stash, scene_id):
+    rec = read_json(scene_path(conn, scene_id))
+    rec = sanitize(rec) if rec else None
+    scene = stash.call(
+        "query($id: ID!) { findScene(id: $id) { id files { id path duration } } }",
+        {"id": str(scene_id)},
+    )["findScene"]
+    if scene is None or not scene["files"]:
+        raise RuntimeError("scene %d has no file" % scene_id)
+    src = scene["files"][0]
+    if not rec or not rec["ranges"]:
+        raise RuntimeError("Nothing is marked on this scene.")
+    if rec["file_id"] != src["id"]:
+        raise RuntimeError("The ranges were marked on a different file of this scene.")
+
+    duration = src["duration"] or 0
+    keep = keep_segments(rec, duration)
+    kept = sum(b - a for a, b in keep)
+    if not keep:
+        raise RuntimeError("Nothing would be kept.")
+    if kept >= duration - MIN_LEN:
+        raise RuntimeError("Nothing would be cut.")
+
+    ffmpeg, ffprobe = tool_paths(stash)
+    for tool in (ffmpeg, ffprobe):
+        if not shutil.which(tool) and not os.path.isfile(tool):
+            raise RuntimeError("%s not found" % tool)
+
+    # Where each part really starts: stream copy begins on the keyframe at or
+    # before the In. Estimating it from the part's length is off by the audio
+    # padding (a few hundred ms), which would shift every marker.
+    try:
+        keyframes = op_keyframes(conn, stash, scene_id)["keyframes"]
+    except Exception as err:
+        log("w", "scene %d: no keyframes (%s); marker times will be approximate" % (scene_id, err))
+        keyframes = []
+
+    token = os.urandom(8).hex()
+    exp = Export(conn, scene_id)
+    exp.update(status="cutting", progress=0.0, token=token, message=None,
+               source_file_id=src["id"], source_path=src["path"],
+               output_path=None, kept=kept, duration=duration, started=now())
+
+    out_path = unique_output(src["path"])
+    ext = os.path.splitext(src["path"])[1]
+    # Parts go in a hidden folder beside the source: same disk (so the final
+    # move is a rename), and never under a video file name a scan could pick
+    # up half-written. Stash runs one job at a time, so no scan can run while
+    # this task does anyway.
+    tmp = tempfile.mkdtemp(prefix=".sceneTrimmer-", dir=os.path.dirname(src["path"]))
+    try:
+        parts = []
+        done = 0.0
+
+        def progress(p):
+            p = max(0.0, min(1.0, p))
+            log("p", p)
+            exp.update(force=False, progress=p)
+
+        for i, (a, b) in enumerate(keep):
+            part = os.path.join(tmp, "part%03d%s" % (i, ext))
+            log("i", "scene %d: cutting part %d/%d (%.1f-%.1f s)" % (scene_id, i + 1, len(keep), a, b))
+            # -ss before -i with stream copy starts the part on the keyframe at
+            # or before a (like Avidemux); -t is counted from a.
+            run_ffmpeg(
+                [ffmpeg, "-hide_banner", "-nostdin", "-v", "error", "-y",
+                 "-ss", "%.3f" % a, "-i", src["path"], "-t", "%.3f" % (b - a),
+                 "-map", "0", "-dn", "-ignore_unknown", "-c", "copy",
+                 "-avoid_negative_ts", "make_zero", "-map_metadata", "0",
+                 "-progress", "pipe:1", "-nostats", part],
+                lambda t, done=done: progress(0.85 * (done + min(t, b - a)) / kept),
+            )
+            d = probe_duration(ffprobe, part)
+            before = [k for k in keyframes if k <= a + 0.001]
+            actual = before[-1] if before else max(0.0, min(a, b - d))
+            parts.append({"src_start": a, "src_end": b, "out_dur": d, "actual_start": actual})
+            done += b - a
+
+        pos = 0.0
+        for p in parts:
+            p["out_start"] = pos
+            pos += p["out_dur"]
+
+        exp.update(status="joining", progress=0.85)
+        log("i", "scene %d: joining %d parts" % (scene_id, len(parts)))
+        listing = os.path.join(tmp, "parts.txt")
+        with open(listing, "w", encoding="utf-8") as f:
+            for i in range(len(parts)):
+                f.write("file %s\n" % concat_quote("part%03d%s" % (i, ext)))
+        joined = os.path.join(tmp, "joined%s" % ext)
+        cmd = [ffmpeg, "-hide_banner", "-nostdin", "-v", "error", "-y",
+               "-f", "concat", "-safe", "0", "-i", listing,
+               "-map", "0", "-dn", "-ignore_unknown", "-c", "copy", "-map_metadata", "0"]
+        if ext.lower() in (".mp4", ".m4v", ".mov"):
+            cmd += ["-movflags", "+faststart"]
+        cmd += ["-progress", "pipe:1", "-nostats", joined]
+        run_ffmpeg(cmd, lambda t: progress(0.85 + 0.13 * t / max(pos, 0.001)))
+        os.replace(joined, out_path)
+    except BaseException as err:
+        exp.update(status="error", message=str(err)[:500])
+        raise
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    log("i", "scene %d: wrote %s" % (scene_id, out_path))
+    exp.update(status="scanning", progress=0.98, output_path=out_path, parts=parts)
+
+    # Both of these are queued behind this task (Stash runs jobs one at a
+    # time, in order), so the finalize step runs once the scan has created the
+    # new file's scene. Waiting for the scan here would deadlock the queue.
+    try:
+        stash.call(
+            "mutation($input: ScanMetadataInput!) { metadataScan(input: $input) }",
+            {"input": {"paths": [out_path], "rescan": False,
+                       "scanGenerateCovers": False, "scanGeneratePreviews": False,
+                       "scanGenerateImagePreviews": False, "scanGenerateSprites": False,
+                       "scanGeneratePhashes": False, "scanGenerateThumbnails": False,
+                       "scanGenerateClipPreviews": False}},
+        )
+        job = stash.call(
+            "mutation($args: Map) { runPluginTask(plugin_id: \"sceneTrimmer\", "
+            "task_name: \"Finalize trim\", description: \"Scene Trimmer: attach the "
+            "trimmed file to scene %d\", args_map: $args) }" % scene_id,
+            {"args": {"scene_id": str(scene_id), "token": token}},
+        )["runPluginTask"]
+    except Exception as err:
+        exp.update(status="error",
+                   message="The trimmed file was written to %s, but it couldn't be "
+                           "added to the scene: %s" % (out_path, err))
+        raise
+    exp.update(finalize_job=job)
+    log("p", 1.0)
+    return {"output_path": out_path, "finalize_job": job}
+
+
+# --- export: finalize task ---------------------------------------------------
+
+def op_finalize(conn, stash, scene_id, token):
+    exp = Export.load(conn, scene_id)
+    st = exp.state
+    if not st or st.get("token") != token:
+        log("w", "scene %d: this trim was superseded; nothing to do" % scene_id)
+        return {"skipped": True}
+    try:
+        return finalize(conn, stash, scene_id, exp)
+    except BaseException as err:
+        exp.update(status="error",
+                   message="The trimmed file was written to %s, but adding it to the "
+                           "scene failed: %s" % (st.get("output_path"), str(err)[:400]))
+        raise
+
+
+def finalize(conn, stash, scene_id, exp):
+    st = exp.state
+    out_path = st["output_path"]
+    exp.update(status="finalizing")
+
+    found = stash.call(
+        "query($f: SceneFilterType) { findScenes(scene_filter: $f, filter: {per_page: -1}) "
+        "{ scenes { id files { id path } } } }",
+        {"f": {"path": {"value": out_path, "modifier": "EQUALS"}}},
+    )["findScenes"]["scenes"]
+    new_file = None
+    new_scene = None
+    for s in found:
+        for f in s["files"]:
+            if f["path"] == out_path:
+                new_file, new_scene = f, s
+    if new_file is None:
+        raise RuntimeError("the scan didn't add the trimmed file; is its folder excluded from the library?")
+
+    if new_scene["id"] != str(scene_id):
+        # Moves the file (and nothing else worth keeping) onto the original
+        # scene and deletes the scene the scan just made. The original scene's
+        # own metadata, cover, tags, performers and stash IDs stay as they are.
+        stash.call(
+            "mutation($input: SceneMergeInput!) { sceneMerge(input: $input) { id } }",
+            {"input": {"source": [new_scene["id"]], "destination": str(scene_id),
+                       "play_history": False, "o_history": False}},
+        )
+    # Separate call: merge never changes the destination's primary file.
+    stash.call(
+        "mutation($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
+        {"input": {"id": str(scene_id), "primary_file_id": new_file["id"], "resume_time": 0}},
+    )
+
+    markers = stash.call(
+        "query($id: ID!) { findScene(id: $id) { scene_markers { id seconds end_seconds } } }",
+        {"id": str(scene_id)},
+    )["findScene"]["scene_markers"]
+    moved = removed = 0
+    for m in markers:
+        mapped = remap_marker(m["seconds"], m.get("end_seconds"), st["parts"])
+        if mapped is None:
+            stash.call("mutation($id: ID!) { sceneMarkerDestroy(id: $id) }", {"id": m["id"]})
+            removed += 1
+        else:
+            stash.call(
+                "mutation($input: SceneMarkerUpdateInput!) { sceneMarkerUpdate(input: $input) { id } }",
+                {"input": {"id": m["id"], "seconds": round(mapped[0], 3),
+                           "end_seconds": round(mapped[1], 3) if mapped[1] is not None else None}},
+            )
+            moved += 1
+    log("i", "scene %d: %d markers moved, %d removed (they were in cut parts)" % (scene_id, moved, removed))
+
+    # The ranges described the old file; the new primary file is already cut.
+    op_save(conn, stash, scene_id, None)
+
+    settings = plugin_settings(stash)
+    if not settings.get("skipGenerate"):
+        stash.call(
+            "mutation($input: GenerateMetadataInput!) { metadataGenerate(input: $input) }",
+            {"input": {"sceneIDs": [str(scene_id)], "covers": False, "sprites": True,
+                       "previews": True, "phashes": True, "markers": True}},
+        )
+    if settings.get("deleteOriginal"):
+        stash.call("mutation($ids: [ID!]!) { deleteFiles(ids: $ids) }",
+                   {"ids": [st["source_file_id"]]})
+        log("i", "scene %d: deleted the original file %s" % (scene_id, st["source_path"]))
+
+    exp.update(status="done", progress=1.0, new_file_id=new_file["id"],
+               markers_moved=moved, markers_removed=removed, finished=now())
+    return {"new_file_id": new_file["id"]}
+
+
 # --- entry point -------------------------------------------------------------
 
 def main():
@@ -326,6 +730,14 @@ def main():
         return op_save(conn, stash, scene_id, args.get("trim"))
     if mode == "keyframes":
         return op_keyframes(conn, stash, scene_id)
+    if mode == "export_status":
+        return op_export_status(conn, scene_id)
+    if mode == "export_clear":
+        return op_export_clear(conn, scene_id)
+    if mode == "trim":
+        return op_trim(conn, stash, scene_id)
+    if mode == "finalize":
+        return op_finalize(conn, stash, scene_id, args.get("token"))
     raise RuntimeError("unknown mode %r" % mode)
 
 

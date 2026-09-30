@@ -1,16 +1,17 @@
 # Scene Trimmer - User Manual
 
 Cut the boring parts out of a scene while you watch it. You mark ranges on the
-video player and playback skips the parts that are cut. The file itself is not
-changed, and your marks are saved as you go.
+video player and playback skips the parts that are cut, and your marks are
+saved as you go. The file itself isn't changed unless you choose to create a
+trimmed copy (see [Creating a trimmed file](#creating-a-trimmed-file)).
 
 ## Requirements
 
 - **Python 3** available to Stash. The plugin's small backend script uses only
   the standard library, so there's nothing to install with pip.
-- **ffprobe** (it ships with ffmpeg). Stash's configured ffprobe is used, or
-  the one on your `PATH`. Without it everything still works except
-  keyframe navigation.
+- **ffmpeg and ffprobe**. Stash's configured ones are used, or the ones on
+  your `PATH`. Without them skipping still works, but keyframe navigation and
+  creating a trimmed file don't.
 
 ## Keep or remove?
 
@@ -90,6 +91,7 @@ length, and how many ranges there are, for example
   without losing your ranges.
 - **Clear all**: asks "Delete all ranges for this scene?" and needs
   **Yes, clear all** to confirm.
+- **Create trimmed file…**: see below.
 
 Press **Done** (or the scissors button again) to leave Trim mode.
 
@@ -100,6 +102,45 @@ parts during playback** is on, the player jumps over the cut parts, including
 when you seek into one. After the last kept part the video ends normally, so
 a queue moves on to the next scene. The scissors button is green when a scene
 is being trimmed.
+
+## Creating a trimmed file
+
+When you're happy with the edit, **Segments → Create trimmed file…** writes a
+new file with only the kept parts. It's cut without re-encoding (stream copy),
+so it takes about as long as copying the file, and quality doesn't change.
+
+1. Confirm the dialog. It shows how much is kept, for example
+   "Create a new file with only the kept parts (1:12:03 of 1:48:50)?".
+2. The status line follows the work: "Creating trimmed file… 43%", "Joining
+   the parts…", "Adding the new file to Stash…", "Adding the new file to this
+   scene…". The steps also appear in **Settings → Tasks** as the Stash tasks
+   "Trim scene", a scan, and "Finalize trim". They carry on if you leave the
+   page.
+3. When it's done the page reloads ("Trimmed file added to the scene –
+   reloading…").
+
+What you end up with:
+
+- A new file next to the original, named `<original name>.trimmed.<ext>`
+  (or `.trimmed-2`, `.trimmed-3`, … if that name is taken).
+- It is added to **the same scene** as its main (primary) file, so the title,
+  studio, performers, tags, cover, stash IDs and play history all stay. The
+  original file stays on the scene as a second file; you can delete it from
+  the **File Info** tab, or turn on **Delete the original file after
+  trimming** in the plugin settings.
+- Markers are moved to their new times. Markers that started in a cut part
+  are deleted.
+- The ranges are cleared, since the new file is already cut.
+- Stash then generates sprites, previews, the phash and marker previews for
+  the new file, unless **Don't generate previews for trimmed files** is on.
+
+Cuts without re-encoding can only start on a keyframe, so a kept part may
+start a little before its In. With **Snap** on your Ins already sit on
+keyframes, and the file matches exactly what you marked.
+
+While a trim is running, marking is disabled for that scene. If it fails, the
+status line shows "Trim failed: …" with the reason and **Dismiss**; the
+original file and scene are never changed by a failed trim.
 
 ## Your work is always saved
 

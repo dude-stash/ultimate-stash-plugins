@@ -1,6 +1,6 @@
 name: Scene Trimmer
 description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Ranges are saved as you go.
-version: 0.1.0
+version: 0.2.0
 exec:
   - python
   - "{pluginDir}/sceneTrimmer.py"
@@ -15,3 +15,20 @@ settings:
     displayName: Marked ranges are removed
     description: "Off: the ranges you mark are kept and everything else is skipped. On: the ranges you mark are skipped. Only the default for scenes you haven't trimmed yet - each scene remembers its own mode."
     type: BOOLEAN
+  skipGenerate:
+    displayName: Don't generate previews for trimmed files
+    description: After a trimmed file is added to its scene, Stash normally generates its sprites, previews, phash and marker previews. Turn this on to skip that.
+    type: BOOLEAN
+  deleteOriginal:
+    displayName: Delete the original file after trimming
+    description: Once the trimmed file is the scene's main file, delete the original (it goes to Stash's trash folder if you have one set). Off by default - the original stays on the scene as a second file.
+    type: BOOLEAN
+tasks:
+  - name: Trim scene
+    description: Started from the player's Segments panel. Cuts the kept parts into a new file without re-encoding.
+    defaultArgs:
+      mode: trim
+  - name: Finalize trim
+    description: Queued automatically after "Trim scene". Adds the trimmed file to its scene.
+    defaultArgs:
+      mode: finalize

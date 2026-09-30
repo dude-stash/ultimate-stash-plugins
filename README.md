@@ -62,10 +62,10 @@ Replace the read-only Details tab on scene pages with the edit form.
 
 **Manual:** [How to use Scene Edit First Tab](docs/scene-edit-first-tab.md)
 
-### Scene Trimmer (v0.1)
+### Scene Trimmer (v0.2)
 
 Trim the repetitive parts of a scene while you watch it. Playback skips the
-cut parts; the file is left untouched.
+cut parts, and you can export a trimmed file that stays linked to the scene.
 
 **Features:**
 
@@ -76,9 +76,11 @@ cut parts; the file is left untouched.
 - Step between keyframes with `↑` / `↓` and snap marks to them.
 - Saved as you go, including an In you haven't closed yet, so you can stop and
   come back any time.
+- Create a trimmed file without re-encoding. It becomes the scene's main
+  file, so no metadata is lost, and markers move to their new times.
 
-**Requirement:** Python 3 available to Stash (standard library only) and
-ffprobe for keyframe navigation.
+**Requirement:** Python 3 available to Stash (standard library only), plus
+ffmpeg/ffprobe for keyframes and trimmed files.
 
 **Manual:** [How to use Scene Trimmer](docs/scene-trimmer.md)
 
