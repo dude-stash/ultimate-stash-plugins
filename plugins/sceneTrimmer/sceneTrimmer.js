@@ -166,6 +166,44 @@
     return rec.mode === "remove" ? complement(marked, duration) : marked;
   }
 
+  // Split points closer than this to each other or to either end would make
+  // a scene of a second or two.
+  const SPLIT_GAP = 1;
+
+  function normalizeSplits(splits, duration) {
+    const out = [];
+    (splits || [])
+      .map(round3)
+      .filter((t) => t >= SPLIT_GAP && (!(duration > 0) || t <= duration - SPLIT_GAP))
+      .sort((a, b) => a - b)
+      .forEach((t) => {
+        if (!out.length || t - out[out.length - 1] >= SPLIT_GAP) out.push(t);
+      });
+    return out;
+  }
+
+  // Mirrors plan_outputs in sceneTrimmer.py: parts that are entirely cut
+  // produce no scene.
+  function splitSceneCount() {
+    if (!S.rec || !(S.duration > 0)) return 0;
+    const keep = S.keep || [[0, S.duration]];
+    const bounds = [0].concat(S.rec.splits, [S.duration]);
+    let n = 0;
+    for (let i = 0; i < bounds.length - 1; i++) {
+      let kept = 0;
+      keep.forEach((k) => {
+        kept += Math.max(0, Math.min(k[1], bounds[i + 1]) - Math.max(k[0], bounds[i]));
+      });
+      if (kept >= 1) n += 1;
+    }
+    return n;
+  }
+
+  function groupURL(id) {
+    const base = document.querySelector("base");
+    return ((base && base.getAttribute("href")) || "/") + "groups/" + id;
+  }
+
   function total(segments) {
     return segments.reduce((sum, s) => sum + (s[1] - s[0]), 0);
   }
@@ -230,6 +268,7 @@
       ranges: [],
       pending_in: null,
       last_pos: null,
+      splits: [],
     };
   }
 
@@ -331,7 +370,10 @@
   // opening and closing Trim mode on an untouched scene leaves no trace.
   function worthSaving() {
     const r = S.rec;
-    return !!r && (r.ranges.length > 0 || r.pending_in != null || S.hasRecord);
+    return (
+      !!r &&
+      (r.ranges.length > 0 || r.splits.length > 0 || r.pending_in != null || S.hasRecord)
+    );
   }
 
   function rememberPosition() {
@@ -347,6 +389,7 @@
   // Call after every edit to S.rec.
   function commit() {
     S.rec.ranges = normalize(S.rec.ranges, S.duration);
+    S.rec.splits = normalizeSplits(S.rec.splits, S.duration);
     S.rec.file_id = S.fileId;
     if (S.editing && P) S.rec.last_pos = round3(P.currentTime());
     queueSave();
@@ -404,7 +447,10 @@
       info = results[0];
       loaded = results[1];
       S.defaultMode = results[2];
-      S.export = results[3] && results[3].status !== "done" ? results[3] : null;
+      // A finished trim needs no mention (the page reloaded into it); a
+      // finished split stays up until dismissed, with a link to its group.
+      const exp = results[3];
+      S.export = exp && (exp.status !== "done" || exp.kind === "split") ? exp : null;
     } catch (err) {
       if (token !== loadToken) return;
       console.warn(LOG, "could not load scene", sceneId, err);
@@ -434,7 +480,9 @@
     S.hasRecord = !!trim;
     S.rec = trim ? trim : defaultRec();
     if (!S.rec.file_id) S.rec.file_id = S.fileId;
-    S.stale = S.rec.file_id !== S.fileId && S.rec.ranges.length > 0;
+    if (!Array.isArray(S.rec.splits)) S.rec.splits = [];
+    S.stale =
+      S.rec.file_id !== S.fileId && (S.rec.ranges.length > 0 || S.rec.splits.length > 0);
     S.loaded = true;
     if (loaded && loaded.source === "custom_field") {
       flash("Trim ranges restored from the scene's backup copy.");
@@ -789,6 +837,14 @@
       });
     });
 
+    S.rec.splits.forEach((t, i) => {
+      const line = document.createElement("div");
+      line.className = "sceneTrimmer-split";
+      line.style.left = (t / d) * 100 + "%";
+      line.title = "Scene " + (i + 2) + " starts at " + fmt(t);
+      layer.appendChild(line);
+    });
+
     if (S.rec.pending_in != null) {
       const now = P.currentTime();
       const a = Math.min(S.rec.pending_in, now);
@@ -922,6 +978,28 @@
     commit();
   }
 
+  function markSplit() {
+    if (!canEdit()) return;
+    const t = round3(snapTime(P.currentTime()));
+    if (t < SPLIT_GAP || t > S.duration - SPLIT_GAP) {
+      flash("Too close to the start or end to split");
+      return;
+    }
+    if (S.rec.splits.some((x) => Math.abs(x - t) < SPLIT_GAP)) {
+      flash("There's already a split here");
+      return;
+    }
+    S.rec.splits.push(t);
+    commit();
+    flash("Split at " + fmt(t) + " – " + (S.rec.splits.length + 1) + " scenes");
+  }
+
+  function deleteSplit(i) {
+    if (!canEdit()) return;
+    S.rec.splits.splice(i, 1);
+    commit();
+  }
+
   function deleteRange(i) {
     if (!canEdit()) return;
     S.rec.ranges.splice(i, 1);
@@ -979,11 +1057,11 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function startExport() {
-    if (!canEdit() || !S.keep || !S.keep.length) return;
+  async function startExport(kind) {
+    if (!canEdit()) return;
     const sceneId = S.sceneId;
     S.confirm = null;
-    S.export = { status: "queued", progress: 0 };
+    S.export = { status: "queued", progress: 0, kind: kind };
     notify();
     try {
       // The task reads the saved record, so the latest edits must be in it.
@@ -996,8 +1074,12 @@
         variables: {
           id: PLUGIN_ID,
           task: "Trim scene",
-          desc: "Scene Trimmer: trim scene " + sceneId,
-          args: { scene_id: sceneId },
+          desc:
+            "Scene Trimmer: " +
+            (kind === "split" ? "split" : "trim") +
+            " scene " +
+            sceneId,
+          args: { scene_id: sceneId, kind: kind },
         },
         fetchPolicy: "no-cache",
       });
@@ -1041,6 +1123,10 @@
           if (S.sceneId !== sceneId) return;
           if (!st) {
             S.export = { status: "error", message: "The trim task didn't start." };
+          } else if (st.status === "done" && st.kind === "split") {
+            S.export = st;
+            notify();
+            return;
           } else if (st.status === "done") {
             S.export = st;
             notify();
@@ -1077,13 +1163,15 @@
       case "queued":
         return "Trim queued – waiting for other Stash tasks…";
       case "cutting":
-        return "Creating trimmed file… " + pct;
+        return (e.kind === "split" ? "Creating the scene files… " : "Creating trimmed file… ") + pct;
       case "joining":
         return "Joining the parts… " + pct;
       case "scanning":
-        return "Adding the new file to Stash…";
+        return e.kind === "split" ? "Adding the new files to Stash…" : "Adding the new file to Stash…";
       case "finalizing":
-        return "Adding the new file to this scene…";
+        return e.kind === "split"
+          ? "Setting up the new scenes…"
+          : "Adding the new file to this scene…";
       default:
         return null;
     }
@@ -1093,6 +1181,7 @@
     "[": markIn,
     "]": markOut,
     "\\": togglePreview,
+    x: markSplit,
     up: () => stepKeyframe(-1),
     down: () => stepKeyframe(1),
   };
@@ -1206,6 +1295,22 @@
     }
     if (exportActive()) {
       items.push(h("span", { key: "export" }, exportText()));
+    } else if (S.export && S.export.status === "done" && S.export.kind === "split") {
+      const n = (S.export.scene_ids || []).length;
+      items.push(
+        h(
+          "span",
+          { key: "export" },
+          "Created " + n + (n === 1 ? " scene" : " scenes") + " in the group “" + S.export.group_name + "”. ",
+          h(
+            "a",
+            { key: "open", className: "sceneTrimmer-link", href: groupURL(S.export.group_id) },
+            "Open group"
+          ),
+          " ",
+          btn("Dismiss", dismissExport, { key: "dismiss" })
+        )
+      );
     } else if (S.export && S.export.status === "error") {
       items.push(
         h(
@@ -1279,7 +1384,27 @@
           { className: "sceneTrimmer-muted" },
           "Cuts land on keyframes, so a kept part can start a little before its In unless Snap was on."
         ),
-        btn("Create trimmed file", startExport, { active: true }),
+        btn("Create trimmed file", () => startExport("trim"), { active: true }),
+        btn("Cancel", () => {
+          S.confirm = null;
+          notify();
+        })
+      );
+    } else if (S.confirm && S.confirm.kind === "split") {
+      const count = splitSceneCount();
+      confirm = h(
+        "div",
+        { className: "sceneTrimmer-confirm" },
+        h(
+          "div",
+          null,
+          "Create " +
+            count +
+            " new scenes from this one, one per part" +
+            (rec.ranges.length ? ", with the cut parts left out" : "") +
+            "? Each gets this scene's title (as “… - Scene N”), studio, date, director, tags and performers, and they're put in a group in order. This scene and its file stay as they are."
+        ),
+        btn("Split into " + count + " scenes", () => startExport("split"), { active: true }),
         btn("Cancel", () => {
           S.confirm = null;
           notify();
@@ -1317,7 +1442,7 @@
       : h(
           "div",
           { className: "sceneTrimmer-muted" },
-          "No ranges yet. Press [ to mark In and ] to mark Out."
+          "No ranges yet. Press [ to mark In and ] to mark Out, or x to split."
         );
 
     return h(
@@ -1334,6 +1459,25 @@
       ),
       confirm,
       h("div", { className: "sceneTrimmer-list" }, rows),
+      rec.splits.length
+        ? h(
+            "div",
+            { className: "sceneTrimmer-list" },
+            rec.splits.map((t, i) =>
+              h(
+                "div",
+                { key: "s" + i, className: "sceneTrimmer-row" },
+                h(
+                  "span",
+                  { className: "sceneTrimmer-row-time" },
+                  "Scene " + (i + 2) + " starts at " + fmt(t)
+                ),
+                btn("Go", () => seekTo(t), { title: "Go to this split point" }),
+                btn("Delete", () => deleteSplit(i))
+              )
+            )
+          )
+        : null,
       h(
         "div",
         { className: "sceneTrimmer-row" },
@@ -1353,7 +1497,11 @@
             S.confirm = { kind: "clear" };
             notify();
           },
-          { disabled: !canEdit() || (!rec.ranges.length && rec.pending_in == null) }
+          {
+            disabled:
+              !canEdit() ||
+              (!rec.ranges.length && !rec.splits.length && rec.pending_in == null),
+          }
         )
       ),
       h(
@@ -1368,6 +1516,17 @@
           {
             disabled: !canEdit() || !S.keep || !S.keep.length || total(S.keep) >= S.duration - 0.1,
             title: "Write a new file with only the kept parts, without re-encoding",
+          }
+        ),
+        btn(
+          "Split into " + splitSceneCount() + " scenes…",
+          () => {
+            S.confirm = { kind: "split" };
+            notify();
+          },
+          {
+            disabled: !canEdit() || !rec.splits.length || splitSceneCount() < 1,
+            title: "Write one file per part between split points, each as a new scene",
           }
         )
       ),
@@ -1409,7 +1568,11 @@
           "div",
           { className: "sceneTrimmer-group" },
           btn("Mark In", markIn, { disabled: !editable, title: "Mark In  [" }),
-          btn("Mark Out", markOut, { disabled: !editable, title: "Mark Out  ]" })
+          btn("Mark Out", markOut, { disabled: !editable, title: "Mark Out  ]" }),
+          btn("Split", markSplit, {
+            disabled: !editable,
+            title: "Start a new scene here  x",
+          })
         ),
         h(
           "div",
@@ -1425,7 +1588,7 @@
           btn("Snap", toggleSnap, {
             active: S.snap && kf,
             disabled: !kf,
-            title: "Snap In and Out to the nearest keyframe",
+            title: "Snap In, Out and split points to the nearest keyframe",
           })
         ),
         h(
@@ -1438,7 +1601,8 @@
             fmt(d, false) +
             " · " +
             S.rec.ranges.length +
-            (S.rec.ranges.length === 1 ? " range" : " ranges")
+            (S.rec.ranges.length === 1 ? " range" : " ranges") +
+            (S.rec.splits.length ? " · " + (S.rec.splits.length + 1) + " scenes" : "")
         ),
         h(
           "div",

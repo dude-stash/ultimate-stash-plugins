@@ -3,7 +3,9 @@
 Cut the boring parts out of a scene while you watch it. You mark ranges on the
 video player and playback skips the parts that are cut, and your marks are
 saved as you go. The file itself isn't changed unless you choose to create a
-trimmed copy (see [Creating a trimmed file](#creating-a-trimmed-file)).
+trimmed copy (see [Creating a trimmed file](#creating-a-trimmed-file)) or
+split a movie into separate scenes (see [Splitting a movie into
+scenes](#splitting-a-movie-into-scenes)).
 
 ## Requirements
 
@@ -63,13 +65,14 @@ frame you're cutting at.
 | **−1f** / **+1f** | One frame back / forward |
 | `[` / **Mark In** | Mark In |
 | `]` / **Mark Out** | Mark Out |
+| `x` / **Split** | Start a new scene here (see [splitting](#splitting-a-movie-into-scenes)) |
 | `\` / **Preview** | Skip the cut parts while in Trim mode, to check your edit |
 
 The keyboard shortcuts only work in Trim mode, so ↑/↓ scroll the page as usual
 otherwise. They are ignored while you're typing in a text field.
 
-**Snap** (on by default) moves every Mark In, Mark Out and handle drag to the
-nearest keyframe. Keyframes are where a cut without re-encoding can actually
+**Snap** (on by default) moves every Mark In, Mark Out, split point and handle
+drag to the nearest keyframe. Keyframes are where a cut without re-encoding can actually
 land, so snapped ranges are exactly what an exported file would contain.
 
 The first time you open Trim mode on a scene, the status line shows "Finding
@@ -91,7 +94,9 @@ length, and how many ranges there are, for example
   without losing your ranges.
 - **Clear all**: asks "Delete all ranges for this scene?" and needs
   **Yes, clear all** to confirm.
-- **Create trimmed file…**: see below.
+- **Scene N starts at …**: one row per split point, with **Go** and
+  **Delete**.
+- **Create trimmed file…** and **Split into N scenes…**: see below.
 
 Press **Done** (or the scissors button again) to leave Trim mode.
 
@@ -142,10 +147,49 @@ While a trim is running, marking is disabled for that scene. If it fails, the
 status line shows "Trim failed: …" with the reason and **Dismiss**; the
 original file and scene are never changed by a failed trim.
 
+## Splitting a movie into scenes
+
+A movie with several scenes can become one Stash scene per scene, the way
+StashDB lists them. Go to where each new scene starts and press **Split**
+(`x`). A yellow line appears on the seek bar. 3 split points make 4 scenes;
+the toolbar shows the count, for example "· 4 scenes".
+
+Split points work together with the ranges: mark the repetitive parts too,
+and each new scene contains only its kept parts. A part that is entirely cut
+doesn't become a scene.
+
+When you're ready, **Segments → Split into N scenes…** and confirm. Like a
+trimmed file, it runs as Stash tasks ("Trim scene", a scan, "Finalize trim")
+and the status line shows the progress ("Creating the scene files… 43%",
+"Adding the new files to Stash…", "Setting up the new scenes…").
+
+What you end up with:
+
+- One new file per scene next to the original, named
+  `<original name>.scene-01.<ext>`, `.scene-02`, …, cut without re-encoding.
+- One new Stash scene per file, each with:
+  - the title "<original title> - Scene N" (or the file name if the original
+    has no title),
+  - the original's studio, date, director, tags and performers, as a
+    starting point before you identify each scene on StashDB,
+  - a copy of the original's markers that fall inside it, at their new times,
+  - a cover (generated during the scan) and, unless **Don't generate previews
+    for trimmed files** is on, sprites, previews and a phash.
+- All of them in a **group** (Stash's name for a movie) in order, as scene 1,
+  2, 3, …. If the original scene is already in a group, that group is used;
+  otherwise a new group named after the original is created, with its
+  studio, date and director.
+- The **original scene and file stay exactly as they are**, including its
+  ranges and split points. Delete it yourself once you're happy with the
+  split.
+
+When it's done the status line says "Created 4 scenes in the group “…”." with
+an **Open group** link and **Dismiss**.
+
 ## Your work is always saved
 
 Every change is saved within half a second, including an In that you haven't
-closed yet. The status line shows "Saving…", then "Saved". Your ranges are
+closed yet and your split points. The status line shows "Saving…", then "Saved". Your ranges are
 also saved when you leave the scene or close the tab. You can stop at any
 time, watch something else, and come back later, even on another device.
 

@@ -1,6 +1,6 @@
 name: Scene Trimmer
-description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Ranges are saved as you go.
-version: 0.2.0
+description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Export a trimmed file, or split a movie into its scenes.
+version: 0.3.0
 exec:
   - python
   - "{pluginDir}/sceneTrimmer.py"
@@ -21,14 +21,14 @@ settings:
     type: BOOLEAN
   deleteOriginal:
     displayName: Delete the original file after trimming
-    description: Once the trimmed file is the scene's main file, delete the original (it goes to Stash's trash folder if you have one set). Off by default - the original stays on the scene as a second file.
+    description: Once the trimmed file is the scene's main file, delete the original (it goes to Stash's trash folder if you have one set). Off by default - the original stays on the scene as a second file. Splitting never deletes the original.
     type: BOOLEAN
 tasks:
   - name: Trim scene
-    description: Started from the player's Segments panel. Cuts the kept parts into a new file without re-encoding.
+    description: Started from the player's Segments panel. Cuts the kept parts into a new file (or one file per scene when splitting) without re-encoding.
     defaultArgs:
       mode: trim
   - name: Finalize trim
-    description: Queued automatically after "Trim scene". Adds the trimmed file to its scene.
+    description: Queued automatically after "Trim scene". Adds the trimmed file to its scene, or sets up the split scenes.
     defaultArgs:
       mode: finalize
