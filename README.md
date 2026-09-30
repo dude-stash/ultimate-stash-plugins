@@ -62,6 +62,26 @@ Replace the read-only Details tab on scene pages with the edit form.
 
 **Manual:** [How to use Scene Edit First Tab](docs/scene-edit-first-tab.md)
 
+### Scene Trimmer (v0.1)
+
+Trim the repetitive parts of a scene while you watch it. Playback skips the
+cut parts; the file is left untouched.
+
+**Features:**
+
+- Trim mode inside the video player: Mark In / Mark Out (`[` / `]`),
+  draggable handles on the seek bar, and it works in fullscreen.
+- Mark the parts to keep or the parts to remove; you choose the default, and
+  each scene remembers its own mode.
+- Step between keyframes with `↑` / `↓` and snap marks to them.
+- Saved as you go, including an In you haven't closed yet, so you can stop and
+  come back any time.
+
+**Requirement:** Python 3 available to Stash (standard library only) and
+ffprobe for keyframe navigation.
+
+**Manual:** [How to use Scene Trimmer](docs/scene-trimmer.md)
+
 ## Support
 
 - **Issues:** [GitHub Issues](https://github.com/dude-stash/ultimate-stash-plugins/issues)

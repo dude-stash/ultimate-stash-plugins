@@ -1,0 +1,17 @@
+name: Scene Trimmer
+description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Ranges are saved as you go.
+version: 0.1.0
+exec:
+  - python
+  - "{pluginDir}/sceneTrimmer.py"
+interface: raw
+ui:
+  javascript:
+    - sceneTrimmer.js
+  css:
+    - sceneTrimmer.css
+settings:
+  markedRangesRemove:
+    displayName: Marked ranges are removed
+    description: "Off: the ranges you mark are kept and everything else is skipped. On: the ranges you mark are skipped. Only the default for scenes you haven't trimmed yet - each scene remembers its own mode."
+    type: BOOLEAN

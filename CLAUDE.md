@@ -5,8 +5,9 @@ Guidance for Claude Code when working in this repository.
 ## What this repo is
 
 A **plugin source** for [Stash](https://github.com/stashapp/stash). It is not
-an application: it is a set of browser-side UI plugins plus a build script that
-packages them into a repository index Stash can install from over HTTP.
+an application: it is a set of browser-side UI plugins (some with a small
+server-side script) plus a build script that packages them into a repository
+index Stash can install from over HTTP.
 
 `build_site.sh` zips each plugin directory and writes `_site/index.yml`;
 `.github/workflows/deploy.yml` publishes `_site` to GitHub Pages, which is what
@@ -19,6 +20,7 @@ plugins/<PluginName>/
   <PluginName>.yml    # manifest: name, description, version, ui assets
   <PluginName>.js     # the plugin
   <PluginName>.css    # optional styles
+  <PluginName>.py     # optional backend script (see below)
 docs/                 # user manuals, linked from README.md
 build_site.sh         # packages plugins/ into _site/
 ```
@@ -45,6 +47,12 @@ scratch files there.
   `cropperjs@1.6.1`. Load order in the yml is the load order in the browser.
   Code that depends on such a library must degrade gracefully if the CDN
   request failed.
+- **Backend scripts are stdlib-only Python**, run by Stash as a raw plugin
+  (`exec: [python, "{pluginDir}/<Name>.py"]`, `interface: raw`) - see
+  `plugins/sceneTrimmer/sceneTrimmer.py`. No pip dependencies (not even
+  `stashapi`); talk to GraphQL with `urllib` and the `server_connection`
+  cookie. Keep persistent data in Stash's config dir (`server_connection.Dir`),
+  never in the plugin dir, which plugin updates replace.
 
 ## Conventions in this codebase
 
@@ -74,7 +82,9 @@ scratch files there.
 
 There is no test suite and no headless way to exercise these plugins.
 
-- Syntax check: `node --check plugins/<Name>/<Name>.js`
+- Syntax check: `node --check plugins/<Name>/<Name>.js`, and
+  `python3 -m py_compile plugins/<Name>/<Name>.py` for a backend script
+  (delete the `__pycache__` it leaves, it would end up in the zip).
 - Packaging check: `./build_site.sh /tmp/site`, then confirm `/tmp/site/index.yml`
   lists each plugin with the expected version and that each zip contains the
   yml plus its assets.
