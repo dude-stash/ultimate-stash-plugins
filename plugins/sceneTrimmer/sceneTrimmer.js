@@ -1177,14 +1177,34 @@
     }
   }
 
+  // Mousetrap handles these. They're global, so they work with focus anywhere.
   const HOTKEYS = {
-    "[": markIn,
-    "]": markOut,
     "\\": togglePreview,
     x: markSplit,
-    up: () => stepKeyframe(-1),
-    down: () => stepKeyframe(1),
   };
+
+  // Stash's own player hotkeys claim these keys on keydown: [ and ] seek by
+  // 10% of the video, ↑/↓ change the volume. That runs before Mousetrap sees
+  // the keypress, so Mark In read a time 10% earlier than the frame on screen.
+  // A capture listener on window gets there first and keeps the event from the
+  // player.
+  const PLAYER_KEYS = {
+    "[": markIn,
+    "]": markOut,
+    ArrowUp: () => stepKeyframe(-1),
+    ArrowDown: () => stepKeyframe(1),
+  };
+
+  function onPlayerKey(e) {
+    if (!S.editing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const action = PLAYER_KEYS[e.key];
+    if (!action) return;
+    const el = e.target;
+    if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    action();
+  }
 
   function enterEditing() {
     if (!P || S.editing) return;
@@ -1194,10 +1214,11 @@
     Object.keys(HOTKEYS).forEach((key) =>
       Mousetrap.bind(key, () => {
         HOTKEYS[key]();
-        // Stops the page scrolling on ↑/↓.
         return false;
       })
     );
+    // preventDefault in here also stops the page scrolling on ↑/↓.
+    window.addEventListener("keydown", onPlayerKey, true);
     S.resumeOffered =
       S.loaded &&
       !S.stale &&
@@ -1216,6 +1237,7 @@
     S.resumeOffered = false;
     if (alive(P)) P.removeClass("sceneTrimmer-editing");
     Object.keys(HOTKEYS).forEach((key) => Mousetrap.unbind(key));
+    window.removeEventListener("keydown", onPlayerKey, true);
     notify();
     flushSaves();
     if (alive(P)) enforce("seeked");

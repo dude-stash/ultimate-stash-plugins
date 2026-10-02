@@ -1,6 +1,6 @@
 name: Scene Trimmer
 description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Export a trimmed file, or split a movie into its scenes.
-version: 0.3.0
+version: 0.3.1
 exec:
   - python
   - "{pluginDir}/sceneTrimmer.py"
