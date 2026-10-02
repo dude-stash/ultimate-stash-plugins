@@ -40,9 +40,10 @@ do with them:
 ## Trimming
 
 1. Open a scene and press the **scissors button** in the player's control bar
-   (next to fullscreen). This turns on Trim mode, and a toolbar appears above
-   the seek bar. The controls stay visible while you're in Trim mode, and it
-   works in fullscreen.
+   (next to fullscreen). This turns on Trim mode: a tool box appears at the
+   left edge of the player, and **Snap**, **Preview** and **Segments** appear
+   at the bottom right. The controls stay visible while you're in Trim mode,
+   and it works in fullscreen.
 2. Play or scrub to where a range starts and press **Mark In** (`[`). Go to
    where it ends and press **Mark Out** (`]`).
    - While an In is open, the status line shows
@@ -60,15 +61,17 @@ frame you're cutting at.
 
 | Key / button | Does |
 | --- | --- |
-| `↑` / **◀K** | Previous keyframe |
-| `↓` / **K▶** | Next keyframe |
 | `[` / **Mark In** | Mark In |
 | `]` / **Mark Out** | Mark Out |
 | `x` / **Split** | Start a new scene here (see [splitting](#splitting-a-movie-into-scenes)) |
+| `↑` / **Previous keyframe** | Previous keyframe |
+| `↓` / **Next keyframe** | Next keyframe |
 | `\` / **Preview** | Skip the cut parts while in Trim mode, to check your edit |
 
-Each shortcut is shown on its button in the toolbar. The keyboard shortcuts only work in Trim mode, so ↑/↓ scroll the page as usual
-otherwise. They are ignored while you're typing in a text field.
+The buttons in the tool box at the left are icons only; hover one for its name.
+Each shortcut is shown on its button. The keyboard shortcuts only work in Trim
+mode, so ↑/↓ scroll the page as usual otherwise. They are ignored while you're
+typing in a text field.
 
 **Snap** (on by default) moves every Mark In, Mark Out, split point and handle
 drag to the nearest keyframe. Keyframes are where a cut without re-encoding can actually
@@ -79,7 +82,7 @@ keyframes…" for a few seconds. After that they're cached. If they can't be
 read you'll see "Keyframes unavailable – ↑/↓ step 1 s", and ↑/↓ move by one
 second instead.
 
-The toolbar also shows the scene's mode, how much is kept out of the total
+Above the bottom-right buttons you'll also see the scene's mode, how much is kept out of the total
 length, and how many ranges there are, for example
 "Keep mode · kept 1:12:03 / 1:48:50 · 4 ranges".
 
@@ -97,7 +100,7 @@ length, and how many ranges there are, for example
   **Delete**.
 - **Create trimmed file…** and **Split into N scenes…**: see below.
 
-Press **Done** (or the scissors button again) to leave Trim mode.
+Press the scissors button again to leave Trim mode.
 
 ## Watching a trimmed scene
 
@@ -151,7 +154,7 @@ original file and scene are never changed by a failed trim.
 A movie with several scenes can become one Stash scene per scene, the way
 StashDB lists them. Go to where each new scene starts and press **Split**
 (`x`). A yellow line appears on the seek bar. 3 split points make 4 scenes;
-the toolbar shows the count, for example "· 4 scenes".
+the summary line shows the count, for example "· 4 scenes".
 
 Split points work together with the ranges: mark the repetitive parts too,
 and each new scene contains only its kept parts. A part that is entirely cut
