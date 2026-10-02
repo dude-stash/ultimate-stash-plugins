@@ -208,9 +208,8 @@ just keep editing; the next change tries again.
   new server, a restored database), it's restored from that field
   automatically and the status line says "Trim ranges restored from the
   scene's backup copy."
-- In the scene edit form, `ust_trim` is hidden from the custom fields editor
-  and shown as a note: "ust_trim holds this scene's trim ranges. It's managed
-  by Scene Trimmer and can't be edited here."
+- `ust_trim` is hidden from the scene's custom fields, both in the details
+  view and in the edit form, and is left untouched when you save the form.
 
 Ranges belong to the scene's primary file. If the primary file changes, the
 old ranges no longer line up, so they aren't applied. Trim mode then says

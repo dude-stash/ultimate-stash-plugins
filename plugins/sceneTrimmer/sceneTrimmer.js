@@ -1678,7 +1678,7 @@
 
   handleLocation(window.location.pathname);
 
-  // --- ust_trim custom field: read-only, hidden from the details view --------
+  // --- ust_trim custom field: read-only, hidden from the details and edit views
   //
   // The field is a backup copy the backend keeps up to date (the JSON file in
   // Stash's config dir is what's read). Stash's edit form submits the whole
@@ -1719,16 +1719,6 @@
       values: withoutField(values),
       onChange: (v) => props.onChange(Object.assign({}, v, { [FIELD]: kept })),
     });
-    return h(
-      React.Fragment,
-      null,
-      original.apply(this, [inner].concat(args.slice(1, -1))),
-      h(
-        "div",
-        { className: "sceneTrimmer-field-note text-muted small" },
-        h("code", null, FIELD),
-        " holds this scene's trim ranges. It's managed by Scene Trimmer and can't be edited here."
-      )
-    );
+    return original.apply(this, [inner].concat(args.slice(1, -1)));
   });
 })();
