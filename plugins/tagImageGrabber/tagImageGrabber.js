@@ -2,7 +2,8 @@
 //
 // Adds an action to tag hover cards and tag pages that lets users choose a tag
 // image from linked images, scenes, or performers, with crop and video-frame
-// capture tools.
+// capture tools. Also adds an "Exclude from scrapes" toggle to tag cards and
+// tag pages.
 (function () {
   "use strict";
 
@@ -17,7 +18,7 @@
   const Apollo = PluginApi.libraries.Apollo;
   const Icon = PluginApi.components.Icon;
   const { Button, Modal } = PluginApi.libraries.Bootstrap;
-  const { faImage, faCrop } = PluginApi.libraries.FontAwesomeSolid;
+  const { faImage, faCrop, faBan } = PluginApi.libraries.FontAwesomeSolid;
   const baseURL =
     document.querySelector("base")?.getAttribute("href") || "/";
   const normalizedBaseURL = baseURL.endsWith("/") ? baseURL : `${baseURL}/`;
@@ -1215,6 +1216,118 @@
     loadSources();
   }
 
+  // --- Exclude from scrapes ------------------------------------------
+  //
+  // Toggles a tag's name in Settings -> Scraping -> Excluded tag patterns, so
+  // scrapers stop suggesting that tag. The pattern is the name escaped and
+  // anchored (^name$), matching that tag and nothing else. It goes through
+  // Stash's own configuration query and mutation, whose cache update keeps
+  // the Settings page in sync. Without those hooks (an older Stash) the
+  // toggles simply aren't rendered.
+
+  const StashService = PluginApi.utils && PluginApi.utils.StashService;
+  const canExcludeFromScrapes = !!(
+    StashService &&
+    StashService.useConfiguration &&
+    StashService.useConfigureScraping
+  );
+  if (!canExcludeFromScrapes) {
+    console.warn(
+      "[TagImageGrabber] StashService configuration hooks unavailable; Exclude from scrapes is disabled"
+    );
+  }
+
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function useTagScrapeExclusion(tagName) {
+    const { data } = StashService.useConfiguration();
+    const [configureScraping] = StashService.useConfigureScraping();
+    const [saving, setSaving] = React.useState(false);
+
+    const patterns = data?.configuration?.scraping?.excludeTagPatterns ?? [];
+    const pattern = tagName ? `^${escapeRegExp(tagName)}$` : null;
+    const isOurs = (p) => p.toLowerCase() === pattern.toLowerCase();
+    const excluded = !!pattern && patterns.some(isOurs);
+    const busy = saving || !data;
+
+    async function toggle() {
+      if (!pattern || busy) return;
+      const next = excluded
+        ? patterns.filter((p) => !isOurs(p))
+        : [...patterns, pattern];
+      setSaving(true);
+      try {
+        await configureScraping({
+          variables: { input: { excludeTagPatterns: next } },
+        });
+      } catch (err) {
+        alertFailure(
+          `failed to update excluded tag patterns (${err?.message || err})`
+        );
+      } finally {
+        setSaving(false);
+      }
+    }
+
+    return { excluded, toggle, busy };
+  }
+
+  // Not `disabled` while busy: a disabled button swallows the click, and the
+  // card around it is a link - toggle() ignores clicks while busy instead.
+  function TagCardExcludeButton({ tag }) {
+    const { excluded, toggle, busy } = useTagScrapeExclusion(tag.name);
+
+    return React.createElement(
+      "button",
+      {
+        type: "button",
+        className: [
+          "tag-image-grabber-card-exclude",
+          "btn",
+          "minimal",
+          excluded ? "is-excluded" : "is-not-excluded",
+          busy ? "is-busy" : "",
+        ].join(" "),
+        title: excluded
+          ? "Excluded from scrapes (click to undo)"
+          : "Exclude from scrapes",
+        "aria-label": excluded
+          ? `Stop excluding ${tag.name} from scrapes`
+          : `Exclude ${tag.name} from scrapes`,
+        "aria-pressed": excluded,
+        onClick: (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggle();
+        },
+      },
+      React.createElement(Icon, { icon: faBan, size: "2x" })
+    );
+  }
+
+  function TagPageExcludeButton({ tag }) {
+    const { excluded, toggle, busy } = useTagScrapeExclusion(tag.name);
+
+    return React.createElement(
+      "button",
+      {
+        type: "button",
+        className: `btn btn-secondary tag-image-grabber-page-exclude${
+          excluded ? " is-excluded" : ""
+        }`,
+        disabled: busy,
+        title: excluded
+          ? "Scrapers won't suggest this tag. Click to allow it again."
+          : "Stop scrapers from suggesting this tag (adds it to Settings > Scraping > Excluded tag patterns)",
+        "aria-pressed": excluded,
+        onClick: toggle,
+      },
+      excluded ? "✓ Excluded from scrapes" : "Exclude from scrapes"
+    );
+  }
+
   function TagPagePickerActions({ tag }) {
     const [buttonTarget, setButtonTarget] = React.useState(null);
     const [imageTarget, setImageTarget] = React.useState(null);
@@ -1302,6 +1415,12 @@
       React.Fragment,
       null,
       buttonTarget && ReactDOM.createPortal(pickerButton, buttonTarget),
+      buttonTarget &&
+        canExcludeFromScrapes &&
+        ReactDOM.createPortal(
+          React.createElement(TagPageExcludeButton, { tag }),
+          buttonTarget
+        ),
       imageTarget &&
         ReactDOM.createPortal(
           imageButton,
@@ -1553,7 +1672,11 @@
         originalComponent(props),
         props.tag &&
           props.tag.id &&
-          React.createElement(TagCardImageButton, { tag: props.tag })
+          React.createElement(TagCardImageButton, { tag: props.tag }),
+        props.tag &&
+          props.tag.id &&
+          canExcludeFromScrapes &&
+          React.createElement(TagCardExcludeButton, { tag: props.tag })
       );
     });
 

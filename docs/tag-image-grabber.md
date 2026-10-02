@@ -4,6 +4,10 @@ Tag Image Grabber lets you set a tag's image by picking from content that is
 already linked to that tag: images, scenes (including any frame of the video),
 or performers. Every candidate goes through a crop step before it is saved.
 
+It also adds an **Exclude from scrapes** toggle to tag cards and tag pages, so
+scrapers stop suggesting tags you never want - see
+[Excluding a tag from scrapes](#excluding-a-tag-from-scrapes).
+
 ## Requirements
 
 - The
@@ -143,6 +147,44 @@ scaled to fit, so a square crop fills the card well at every zoom level without
 being cut off. 4:3 is the exact match at the larger zoom levels if you prefer
 it.
 
+## Excluding a tag from scrapes
+
+Some tags you never want a scraper to add - a site's own housekeeping tags,
+say. Stash can already filter those out: Settings → Scraping → **Excluded tag
+patterns** is a list of regular expressions, and any scraped tag whose name
+matches one is dropped from the results. This plugin lets you add a tag to that
+list from the tag itself, without writing the pattern by hand.
+
+**From the tag grid** - hover a tag card. A **ban icon** (🚫) appears in the
+top-right corner, just left of the favourite heart. Click it:
+
+- **faded grey** (only shown on hover): the tag is not excluded;
+- **solid amber** (always shown): the tag is excluded from scrapes.
+
+Click again to undo. On touch devices the icon is always visible.
+
+**From the tag page** - use the **Exclude from scrapes** button in the
+header's edit row, next to **Set Image...**. While the tag is excluded it reads
+**✓ Excluded from scrapes**; click it to undo. Like Set Image..., it is hidden
+while Stash's own edit form is open.
+
+Either way the change is saved immediately - there is no separate Save step.
+
+What gets written is the tag's name, escaped and anchored so it matches that
+exact name and nothing else: `Behind The Scenes` becomes
+`^Behind The Scenes$`, and `C++ (x)` becomes `^C\+\+ \(x\)$`. You can see and
+edit the full list under Settings → Scraping. Matching ignores upper/lower
+case.
+
+Two things to know:
+
+- **Renaming a tag leaves its old pattern behind.** The pattern is the name at
+  the moment you clicked. After a rename the toggle shows as off; turn it on
+  again for the new name, and delete the old pattern in Settings → Scraping if
+  you no longer want it.
+- **It only affects scraping.** The tag stays usable everywhere else - you can
+  still add it to scenes by hand.
+
 ## Troubleshooting
 
 **"This scene has no generated cover image."** Stash hasn't generated a cover
@@ -173,6 +215,10 @@ preview and Save still work in the meantime.
 **"failed to save tag image (...)"** The tag update itself was rejected. The
 message carries the server's reason - usually a permissions or connection
 problem.
+
+**"failed to update excluded tag patterns (...)"** Stash rejected the
+change to the Settings → Scraping list. The message carries the server's
+reason - usually a permissions or connection problem. Nothing was changed.
 
 **The new image doesn't appear.** Saving updates the tag everywhere it is
 visible on screen. If a card still shows the old picture after a save

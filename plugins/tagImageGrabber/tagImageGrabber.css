@@ -42,6 +42,57 @@
   position: relative;
 }
 
+/* "Exclude from scrapes" toggle: sits just left of Stash's favourite heart
+   (top-right, right: 5px) and mirrors its look - faded until hover when off,
+   solid amber when on. */
+.tag-card button.btn.tag-image-grabber-card-exclude {
+  opacity: 1;
+  padding: 0;
+  position: absolute;
+  right: 40px;
+  top: 10px;
+  transition: opacity 0.5s;
+  z-index: 2;
+}
+
+.tag-card button.btn.tag-image-grabber-card-exclude svg.fa-icon {
+  margin-left: 0.4rem;
+  margin-right: 0.4rem;
+}
+
+.tag-card button.btn.tag-image-grabber-card-exclude.is-not-excluded {
+  color: rgba(191, 204, 214, 0.5);
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.9));
+  opacity: 0;
+}
+
+.tag-card button.btn.tag-image-grabber-card-exclude.is-excluded {
+  color: #ffc107;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.9));
+}
+
+.tag-card button.btn.tag-image-grabber-card-exclude.is-busy {
+  cursor: progress;
+}
+
+.tag-card button.btn.tag-image-grabber-card-exclude:hover,
+.tag-card button.btn.tag-image-grabber-card-exclude:active,
+.tag-card button.btn.tag-image-grabber-card-exclude:focus {
+  background: none;
+  box-shadow: none;
+}
+
+.tag-card:hover button.btn.tag-image-grabber-card-exclude.is-not-excluded,
+.tag-card:focus-within button.btn.tag-image-grabber-card-exclude.is-not-excluded {
+  opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .tag-card button.btn.tag-image-grabber-card-exclude.is-not-excluded {
+    opacity: 1;
+  }
+}
+
 .tag-image-grabber-clickable-image {
   display: block;
 }
