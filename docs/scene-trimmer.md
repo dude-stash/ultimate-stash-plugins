@@ -67,7 +67,7 @@ frame you're cutting at.
 | `x` / **Split** | Start a new scene here (see [splitting](#splitting-a-movie-into-scenes)) |
 | `\` / **Preview** | Skip the cut parts while in Trim mode, to check your edit |
 
-The keyboard shortcuts only work in Trim mode, so ↑/↓ scroll the page as usual
+Each shortcut is shown on its button in the toolbar. The keyboard shortcuts only work in Trim mode, so ↑/↓ scroll the page as usual
 otherwise. They are ignored while you're typing in a text field.
 
 **Snap** (on by default) moves every Mark In, Mark Out, split point and handle
