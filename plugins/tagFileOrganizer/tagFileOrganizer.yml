@@ -1,10 +1,13 @@
 name: Tag File Organizer
 description: Move scene files on disk into folders based on their tags, including combo rules. Built for an inbox folder, such as a torrents folder, whose new downloads should end up sorted.
-version: 0.1.0
+version: 0.2.0
 exec:
   - python
   - "{pluginDir}/tagFileOrganizer.py"
 interface: raw
+ui:
+  javascript:
+    - tagFileOrganizer.js
 hooks:
   - name: Organize on scene update
     description: Moves the scene's files when it is edited (for example when its tags change), if "Move when a scene's tags change" is on.
@@ -24,7 +27,7 @@ settings:
     type: BOOLEAN
   sourceFolder:
     displayName: Source folder
-    description: "Only files inside this folder (subfolders included) are moved, for example /data/torrents. Leave empty to consider every file in your library."
+    description: "Only files inside this folder (subfolders included) are moved, for example /data/torrents. Type / to browse folders. Leave empty to consider every file in your library."
     type: STRING
   rules:
     displayName: Rules

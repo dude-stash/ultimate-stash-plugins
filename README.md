@@ -87,7 +87,7 @@ ffmpeg/ffprobe for keyframes and trimmed files.
 
 **Manual:** [How to use Scene Trimmer](docs/scene-trimmer.md)
 
-### Tag File Organizer (v0.1)
+### Tag File Organizer (v0.2)
 
 Move scene files on disk into folders based on their tags.
 
@@ -97,7 +97,8 @@ Move scene files on disk into folders based on their tags.
   `Straight` and `Threesome` can go somewhere else than one tagged only
   `Straight`. The most specific rule wins.
 - Choose a source folder, such as a torrents inbox, so only new downloads are
-  moved and the rest of your library stays put.
+  moved and the rest of your library stays put. The folder box browses your
+  folders as you type, like Stash's library settings.
 - Move when a scene's tags change, with a manual task, or both. You decide in
   the plugin settings.
 - Preview and dry-run modes.
