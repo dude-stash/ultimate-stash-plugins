@@ -1258,9 +1258,11 @@
     split: ["M12 3v18", "M9 8l-4 4 4 4", "M15 8l4 4-4 4"],
     keyBack: ["M18 6l-8 6 8 6z", "M6 5v14"],
     keyForward: ["M6 6l8 6-8 6z", "M18 5v14"],
-    snap: ["M3 3h5v9a4 4 0 0 0 8 0V3h5v9a9 9 0 0 1-18 0z"],
-    preview: ["M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
-    segments: ["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"],
+    // snap, preview and segments are drawn within x 5..19 so their text sits
+    // the same distance from the icon.
+    snap: ["M5 3h4v9a3 3 0 0 0 6 0V3h4v9a7 7 0 0 1-14 0z"],
+    preview: ["M5 12s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z", "M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"],
+    segments: ["M10 7h9", "M10 12h9", "M10 17h9", "M5 7h.01", "M5 12h.01", "M5 17h.01"],
   };
 
   function icon(name) {
