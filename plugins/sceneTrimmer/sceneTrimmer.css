@@ -124,34 +124,92 @@
   z-index: 2;
 }
 
-/* --- editor strip ---------------------------------------------------------- */
+/* --- editor overlay -------------------------------------------------------- */
 
+/* Covers the player but lets clicks through; only the boxes inside take them.
+   The fixed 15px matches the control bar, so the em units below scale the same
+   way they did when the editor lived in it. */
 .sceneTrimmer-strip-root {
-  bottom: 6.6em;
-  left: 0;
+  font-size: 15px;
+  inset: 0;
   pointer-events: none;
   position: absolute;
-  right: 0;
+  z-index: 2;
+}
+
+/* Tool palette: marking and keyframe navigation, mid-height at the left edge. */
+.sceneTrimmer-tools {
+  background: rgba(20, 20, 20, 0.85);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35em;
+  left: 12px;
+  padding: 0.4em;
+  pointer-events: auto;
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.sceneTrimmer-sep {
+  background: rgba(255, 255, 255, 0.2);
+  height: 1px;
+  margin: 0.1em 0.2em;
+}
+
+.sceneTrimmer-tools .sceneTrimmer-btn {
+  align-items: center;
+  display: flex;
+  height: 2.8em;
+  justify-content: center;
+  padding: 0;
+  position: relative;
+  width: 2.8em;
+}
+
+.sceneTrimmer-tools .sceneTrimmer-icon {
+  height: 1.5em;
+  width: 1.5em;
+}
+
+.sceneTrimmer-tools .sceneTrimmer-key {
+  background: rgba(0, 0, 0, 0.55);
+  bottom: 2px;
+  font-size: 0.6em;
+  margin: 0;
+  padding: 0 0.3em;
+  position: absolute;
+  right: 2px;
+}
+
+/* Bottom right: status, summary, the view toggles and the segments panel. */
+.sceneTrimmer-side {
+  align-items: flex-end;
+  bottom: 6.6em;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.9em;
+  gap: 0.4em;
+  max-width: calc(100% - 7em);
+  pointer-events: none;
+  position: absolute;
+  right: 15px;
+}
+
+.sceneTrimmer-side > * {
+  pointer-events: auto;
 }
 
 @media (max-width: 768px) {
-  .sceneTrimmer-strip-root {
+  .sceneTrimmer-side {
     bottom: 5em;
   }
 }
 
-.sceneTrimmer-strip {
-  display: flex;
-  flex-direction: column;
-  font-size: 0.8em;
-  gap: 0.4em;
-  margin: 0 15px;
-  pointer-events: auto;
-  position: relative;
-}
-
 .sceneTrimmer-controls,
-.sceneTrimmer-status {
+.sceneTrimmer-status,
+.sceneTrimmer-info {
   align-items: center;
   background: rgba(20, 20, 20, 0.85);
   border-radius: 4px;
@@ -161,19 +219,13 @@
   padding: 0.35em 0.5em;
 }
 
-.sceneTrimmer-status {
-  align-self: flex-start;
-}
-
-.sceneTrimmer-group {
-  align-items: center;
-  display: flex;
-  gap: 0.25em;
+.sceneTrimmer-controls {
+  gap: 0.4em;
+  padding: 0.4em;
 }
 
 .sceneTrimmer-info {
-  flex: 1 1 auto;
-  opacity: 0.85;
+  opacity: 0.9;
   white-space: nowrap;
 }
 
@@ -189,13 +241,27 @@
   white-space: nowrap;
 }
 
+.sceneTrimmer-btn-lg {
+  align-items: center;
+  display: inline-flex;
+  font-size: 1.1em;
+  gap: 0.45em;
+  padding: 0.4em 0.8em;
+}
+
+.sceneTrimmer-icon {
+  flex: none;
+  height: 1.2em;
+  width: 1.2em;
+}
+
 .sceneTrimmer-key {
   background: rgba(0, 0, 0, 0.35);
   border-radius: 3px;
   color: inherit;
   font: inherit;
   font-size: 0.8em;
-  margin-left: 0.5em;
+  margin-left: 0.2em;
   opacity: 0.8;
   padding: 0 0.4em;
 }
@@ -283,5 +349,3 @@
 .sceneTrimmer-confirm > div {
   flex-basis: 100%;
 }
-
-/* --- custom fields editor note -------------------------------------------- */

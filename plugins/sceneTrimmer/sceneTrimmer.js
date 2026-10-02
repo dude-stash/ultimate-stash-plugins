@@ -747,7 +747,7 @@
     const button = document.createElement("button");
     button.type = "button";
     button.className = "vjs-control vjs-button sceneTrimmer-toggle";
-    button.title = "Trim";
+    button.title = "Trim mode (click again to close)";
     button.innerHTML =
       '<span class="sceneTrimmer-toggle-icon">' +
       scissorsSvg() +
@@ -761,11 +761,12 @@
     barEl.insertBefore(button, fullscreen || null);
     ui.button = button;
 
-    // Inside the control bar, so it shows and hides with the controls in
-    // normal playback and goes fullscreen with the player.
+    // On the player itself rather than in the control bar: the tool box is
+    // anchored to the left edge, mid-height. It still goes fullscreen with the
+    // player, and the control bar is kept visible while editing anyway.
     const stripRoot = document.createElement("div");
     stripRoot.className = "sceneTrimmer-strip-root";
-    barEl.appendChild(stripRoot);
+    p.el().appendChild(stripRoot);
     ReactDOM.render(h(Strip), stripRoot);
     ui.stripRoot = stripRoot;
 
@@ -1239,6 +1240,38 @@
 
   // Clicking a button would leave focus on it, so the next Space would press
   // it again. Hand focus back to the player instead.
+  // Stroke icons on a 24x24 grid, drawn here so they don't depend on which
+  // FontAwesome icons Stash happens to expose to plugins.
+  const ICONS = {
+    markIn: ["M9 4H5v16h4", "M12 7l7 5-7 5z"],
+    markOut: ["M15 4h4v16h-4", "M12 7l-7 5 7 5z"],
+    split: ["M12 3v18", "M9 8l-4 4 4 4", "M15 8l4 4-4 4"],
+    keyBack: ["M18 6l-8 6 8 6z", "M6 5v14"],
+    keyForward: ["M6 6l8 6-8 6z", "M18 5v14"],
+    snap: ["M5 3h4v9a3 3 0 0 0 6 0V3h4v9a7 7 0 0 1-14 0z"],
+    preview: ["M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
+    segments: ["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"],
+  };
+
+  function icon(name) {
+    return h(
+      "svg",
+      {
+        className: "sceneTrimmer-icon",
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+      },
+      ICONS[name].map((d, i) => h("path", { key: i, d: d }))
+    );
+  }
+
+  // opts.icon puts an icon before the label; opts.iconOnly drops the label
+  // text (it stays as the accessible name). opts.hint is the keyboard shortcut.
   function btn(label, onClick, opts) {
     opts = opts || {};
     return h(
@@ -1251,6 +1284,7 @@
           (opts.active ? " is-active" : "") +
           (opts.className ? " " + opts.className : ""),
         title: opts.title,
+        "aria-label": opts.iconOnly ? label : undefined,
         disabled: opts.disabled,
         onClick: (e) => {
           e.currentTarget.blur();
@@ -1258,7 +1292,8 @@
           onClick();
         },
       },
-      label,
+      opts.icon ? icon(opts.icon) : null,
+      opts.iconOnly ? null : label,
       opts.hint ? h("kbd", { className: "sceneTrimmer-key" }, opts.hint) : null
     );
   }
@@ -1560,9 +1595,8 @@
     if (!S.loaded) {
       return h(
         "div",
-        { className: "sceneTrimmer-strip" },
-        h("div", { className: "sceneTrimmer-status" }, S.loadError || "Loading…"),
-        h("div", { className: "sceneTrimmer-controls" }, btn("Done", exitEditing))
+        { className: "sceneTrimmer-side" },
+        h("div", { className: "sceneTrimmer-status" }, S.loadError || "Loading…")
       );
     }
 
@@ -1571,45 +1605,58 @@
     const editable = canEdit();
     const kf = hasKeyframes();
 
+    // Marking tools sit in a box at the left edge of the player, like a tool
+    // palette; the view toggles go bottom right. There's no Done button: the
+    // scissors in the control bar leaves Trim mode.
     return h(
-      "div",
-      { className: "sceneTrimmer-strip" },
-      S.panelOpen && !S.stale ? h(Panel) : null,
-      statusLine(),
+      React.Fragment,
+      null,
       h(
         "div",
-        { className: "sceneTrimmer-controls" },
+        { className: "sceneTrimmer-tools" },
+        btn("Mark In", markIn, {
+          icon: "markIn",
+          iconOnly: true,
+          disabled: !editable,
+          title: "Mark In  [",
+          hint: "[",
+        }),
+        btn("Mark Out", markOut, {
+          icon: "markOut",
+          iconOnly: true,
+          disabled: !editable,
+          title: "Mark Out  ]",
+          hint: "]",
+        }),
+        btn("Split", markSplit, {
+          icon: "split",
+          iconOnly: true,
+          disabled: !editable,
+          title: "Start a new scene here  x",
+          hint: "x",
+        }),
+        h("div", { className: "sceneTrimmer-sep" }),
+        btn("Previous keyframe", () => stepKeyframe(-1), {
+          icon: "keyBack",
+          iconOnly: true,
+          title: kf ? "Previous keyframe  ↑" : "Back 1 second  ↑",
+          hint: "↑",
+        }),
+        btn("Next keyframe", () => stepKeyframe(1), {
+          icon: "keyForward",
+          iconOnly: true,
+          title: kf ? "Next keyframe  ↓" : "Forward 1 second  ↓",
+          hint: "↓",
+        })
+      ),
+      h(
+        "div",
+        { className: "sceneTrimmer-side" },
+        S.panelOpen && !S.stale ? h(Panel) : null,
+        statusLine(),
         h(
           "div",
-          { className: "sceneTrimmer-group" },
-          btn("Mark In", markIn, { disabled: !editable, title: "Mark In  [", hint: "[" }),
-          btn("Mark Out", markOut, { disabled: !editable, title: "Mark Out  ]", hint: "]" }),
-          btn("Split", markSplit, {
-            disabled: !editable,
-            title: "Start a new scene here  x",
-            hint: "x",
-          })
-        ),
-        h(
-          "div",
-          { className: "sceneTrimmer-group" },
-          btn("◀K", () => stepKeyframe(-1), {
-            title: kf ? "Previous keyframe  ↑" : "Back 1 second  ↑",
-            hint: "↑",
-          }),
-          btn("K▶", () => stepKeyframe(1), {
-            title: kf ? "Next keyframe  ↓" : "Forward 1 second  ↓",
-            hint: "↓",
-          }),
-          btn("Snap", toggleSnap, {
-            active: S.snap && kf,
-            disabled: !kf,
-            title: "Snap In, Out and split points to the nearest keyframe",
-          })
-        ),
-        h(
-          "div",
-          { className: "sceneTrimmer-group sceneTrimmer-info" },
+          { className: "sceneTrimmer-info" },
           (S.rec.mode === "remove" ? "Remove mode" : "Keep mode") +
             " · kept " +
             fmt(kept, false) +
@@ -1622,18 +1669,35 @@
         ),
         h(
           "div",
-          { className: "sceneTrimmer-group" },
+          { className: "sceneTrimmer-controls" },
+          btn("Snap", toggleSnap, {
+            icon: "snap",
+            className: "sceneTrimmer-btn-lg",
+            active: S.snap && kf,
+            disabled: !kf,
+            title: "Snap In, Out and split points to the nearest keyframe",
+          }),
           btn("Preview", togglePreview, {
+            icon: "preview",
+            className: "sceneTrimmer-btn-lg",
             active: S.preview,
             title: "Skip the cut parts while in Trim mode  \\",
             hint: "\\",
           }),
-          btn("Segments", () => {
-            S.panelOpen = !S.panelOpen;
-            S.confirm = null;
-            notify();
-          }, { active: S.panelOpen, disabled: S.stale }),
-          btn("Done", exitEditing)
+          btn(
+            "Segments",
+            () => {
+              S.panelOpen = !S.panelOpen;
+              S.confirm = null;
+              notify();
+            },
+            {
+              icon: "segments",
+              className: "sceneTrimmer-btn-lg",
+              active: S.panelOpen,
+              disabled: S.stale,
+            }
+          )
         )
       )
     );
