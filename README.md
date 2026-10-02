@@ -87,6 +87,25 @@ ffmpeg/ffprobe for keyframes and trimmed files.
 
 **Manual:** [How to use Scene Trimmer](docs/scene-trimmer.md)
 
+### Tag File Organizer (v0.1)
+
+Move scene files on disk into folders based on their tags.
+
+**Features:**
+
+- Rules like `Straight => /media/Straight`, with combo rules: a scene tagged
+  `Straight` and `Threesome` can go somewhere else than one tagged only
+  `Straight`. The most specific rule wins.
+- Choose a source folder, such as a torrents inbox, so only new downloads are
+  moved and the rest of your library stays put.
+- Move when a scene's tags change, with a manual task, or both. You decide in
+  the plugin settings.
+- Preview and dry-run modes.
+
+**Requirement:** Python 3 available to Stash (standard library only).
+
+**Manual:** [How to use Tag File Organizer](docs/tag-file-organizer.md)
+
 ## Support
 
 - **Issues:** [GitHub Issues](https://github.com/dude-stash/ultimate-stash-plugins/issues)

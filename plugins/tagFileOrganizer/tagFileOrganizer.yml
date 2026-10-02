@@ -1,0 +1,49 @@
+name: Tag File Organizer
+description: Move scene files on disk into folders based on their tags, including combo rules. Built for an inbox folder, such as a torrents folder, whose new downloads should end up sorted.
+version: 0.1.0
+exec:
+  - python
+  - "{pluginDir}/tagFileOrganizer.py"
+interface: raw
+hooks:
+  - name: Organize on scene update
+    description: Moves the scene's files when it is edited (for example when its tags change), if "Move when a scene's tags change" is on.
+    triggeredBy:
+      - Scene.Update.Post
+      - Scene.Create.Post
+    defaultArgs:
+      mode: hook
+settings:
+  runOnTagChange:
+    displayName: Move when a scene's tags change
+    description: Move a scene's files as soon as you save it with new tags. New files found by a scan don't trigger this until they are edited, so use the manual task for those.
+    type: BOOLEAN
+  runManually:
+    displayName: Allow the manual tasks to move files
+    description: Lets "Organize all scenes" actually move files. "Preview moves" always works. Turn on both this and the setting above to use both ways.
+    type: BOOLEAN
+  sourceFolder:
+    displayName: Source folder
+    description: "Only files inside this folder (subfolders included) are moved, for example /data/torrents. Leave empty to consider every file in your library."
+    type: STRING
+  rules:
+    displayName: Rules
+    description: "One rule per line: Tag, Tag => /destination/folder. A rule matches when the scene has every tag listed. When several rules match, the one with the most tags wins, then the one listed first. Lines starting with # are ignored. The destination must be inside one of your Stash library folders."
+    type: STRING
+  defaultFolder:
+    displayName: Folder when no rule matches
+    description: Optional. Files from the source folder that match no rule go here. Leave empty to leave them where they are.
+    type: STRING
+  dryRun:
+    displayName: Dry run
+    description: Only write the moves to the log, and don't move anything.
+    type: BOOLEAN
+tasks:
+  - name: Organize all scenes
+    description: Move every scene in the source folder according to your rules. Needs "Allow the manual tasks to move files".
+    defaultArgs:
+      mode: organize
+  - name: Preview moves
+    description: Write to the log what "Organize all scenes" would move, without moving anything.
+    defaultArgs:
+      mode: preview
