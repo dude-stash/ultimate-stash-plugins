@@ -274,6 +274,13 @@
   border-color: #137cbd;
 }
 
+/* Has to match the hover rule's specificity, or hovering an active button
+   turns it grey and the click looks like it did nothing. */
+.sceneTrimmer-btn.is-active:hover:not(:disabled) {
+  background: #2a93d5;
+  border-color: #2a93d5;
+}
+
 .sceneTrimmer-error {
   color: #ff8a95;
 }
