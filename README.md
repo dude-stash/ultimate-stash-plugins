@@ -93,12 +93,11 @@ Move scene files on disk into folders based on their tags.
 
 **Features:**
 
-- Rules like `Straight => /media/Straight`, with combo rules: a scene tagged
-  `Straight` and `Threesome` can go somewhere else than one tagged only
-  `Straight`. The most specific rule wins.
+- Rules pick tags from your tag list and a folder from a folder browser.
+  Combo rules work: a scene tagged Straight and Threesome can go somewhere
+  else than one tagged only Straight. The most specific rule wins.
 - Choose a source folder, such as a torrents inbox, so only new downloads are
-  moved and the rest of your library stays put. Pick it with Stash's folder
-  browser, the same as adding a library folder.
+  moved and the rest of your library stays put.
 - Move when a scene's tags change, with a manual task, or both. You decide in
   the plugin settings.
 - Preview and dry-run modes.
