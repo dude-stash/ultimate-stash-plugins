@@ -226,7 +226,7 @@
     defaultMode: "keep",
     keyframes: null,
     kfStatus: "idle",
-    saveStatus: "saved",
+    saveStatus: "idle",
     editing: false,
     preview: false,
     snap: true,
@@ -291,9 +291,20 @@
   let saveTimer = null;
   let saveWorker = null;
 
+  let savedTimer = null;
+
   function setSaveStatus(sceneId, status) {
     if (S.sceneId !== sceneId) return;
     S.saveStatus = status;
+    clearTimeout(savedTimer);
+    // "Saved" is only worth showing for a moment; "idle" shows nothing.
+    if (status === "saved") {
+      savedTimer = setTimeout(() => {
+        if (S.saveStatus !== "saved") return;
+        S.saveStatus = "idle";
+        notify();
+      }, 2000);
+    }
     notify();
   }
 
@@ -414,7 +425,7 @@
       stale: false,
       keyframes: null,
       kfStatus: "idle",
-      saveStatus: "saved",
+      saveStatus: "idle",
       preview: false,
       panelOpen: false,
       confirm: null,
@@ -1172,7 +1183,6 @@
 
   // Mousetrap handles these. They're global, so they work with focus anywhere.
   const HOTKEYS = {
-    "\\": togglePreview,
     x: markSplit,
   };
 
@@ -1248,7 +1258,7 @@
     split: ["M12 3v18", "M9 8l-4 4 4 4", "M15 8l4 4-4 4"],
     keyBack: ["M18 6l-8 6 8 6z", "M6 5v14"],
     keyForward: ["M6 6l8 6-8 6z", "M18 5v14"],
-    snap: ["M5 3h4v9a3 3 0 0 0 6 0V3h4v9a7 7 0 0 1-14 0z"],
+    snap: ["M3 3h5v9a4 4 0 0 0 8 0V3h5v9a9 9 0 0 1-18 0z"],
     preview: ["M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z", "M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"],
     segments: ["M8 6h13", "M8 12h13", "M8 18h13", "M3 6h.01", "M3 12h.01", "M3 18h.01"],
   };
@@ -1373,7 +1383,8 @@
     }
     if (S.flash) items.push(h("span", { key: "flash" }, S.flash));
     const saveText = {
-      saved: S.hasRecord ? "Saved" : "",
+      idle: "",
+      saved: "Saved",
       dirty: "Saving…",
       saving: "Saving…",
       error: "Save failed – retry",
@@ -1500,6 +1511,18 @@
       { className: "sceneTrimmer-panel" },
       h(
         "div",
+        { className: "sceneTrimmer-muted" },
+        "Kept " +
+          fmt(S.keep ? total(S.keep) : S.duration, false) +
+          " / " +
+          fmt(S.duration, false) +
+          " · " +
+          rec.ranges.length +
+          (rec.ranges.length === 1 ? " range" : " ranges") +
+          (rec.splits.length ? " · " + (rec.splits.length + 1) + " scenes" : "")
+      ),
+      h(
+        "div",
         { className: "sceneTrimmer-row" },
         h("span", null, "Marked ranges are"),
         btn("Kept", () => requestMode("keep"), { active: rec.mode === "keep" }),
@@ -1600,8 +1623,6 @@
       );
     }
 
-    const d = S.duration;
-    const kept = S.keep ? total(S.keep) : d;
     const editable = canEdit();
     const kf = hasKeyframes();
 
@@ -1656,19 +1677,6 @@
         statusLine(),
         h(
           "div",
-          { className: "sceneTrimmer-info" },
-          (S.rec.mode === "remove" ? "Remove mode" : "Keep mode") +
-            " · kept " +
-            fmt(kept, false) +
-            " / " +
-            fmt(d, false) +
-            " · " +
-            S.rec.ranges.length +
-            (S.rec.ranges.length === 1 ? " range" : " ranges") +
-            (S.rec.splits.length ? " · " + (S.rec.splits.length + 1) + " scenes" : "")
-        ),
-        h(
-          "div",
           { className: "sceneTrimmer-controls" },
           btn("Snap", toggleSnap, {
             icon: "snap",
@@ -1681,8 +1689,7 @@
             icon: "preview",
             className: "sceneTrimmer-btn-lg",
             active: S.preview,
-            title: "Skip the cut parts while in Trim mode  \\",
-            hint: "\\",
+            title: "Skip the cut parts while in Trim mode",
           }),
           btn(
             "Segments",

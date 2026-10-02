@@ -66,7 +66,7 @@ frame you're cutting at.
 | `x` / **Split** | Start a new scene here (see [splitting](#splitting-a-movie-into-scenes)) |
 | `↑` / **Previous keyframe** | Previous keyframe |
 | `↓` / **Next keyframe** | Next keyframe |
-| `\` / **Preview** | Skip the cut parts while in Trim mode, to check your edit |
+| **Preview** | Skip the cut parts while in Trim mode, to check your edit (button only) |
 
 The buttons in the tool box at the left are icons only; hover one for its name.
 Each shortcut is shown on its button. The keyboard shortcuts only work in Trim
@@ -82,9 +82,9 @@ keyframes…" for a few seconds. After that they're cached. If they can't be
 read you'll see "Keyframes unavailable – ↑/↓ step 1 s", and ↑/↓ move by one
 second instead.
 
-Above the bottom-right buttons you'll also see the scene's mode, how much is kept out of the total
-length, and how many ranges there are, for example
-"Keep mode · kept 1:12:03 / 1:48:50 · 4 ranges".
+The top of the **Segments** panel shows how much is kept out of the total
+length and how many ranges there are, for example
+"Kept 1:12:03 / 1:48:50 · 4 ranges".
 
 ### Segments panel
 
@@ -191,8 +191,8 @@ an **Open group** link and **Dismiss**.
 ## Your work is always saved
 
 Every change is saved within half a second, including an In that you haven't
-closed yet and your split points. The status line shows "Saving…", then "Saved". Your ranges are
-also saved when you leave the scene or close the tab. You can stop at any
+closed yet and your split points. The status line shows "Saving…", then "Saved", which
+disappears after a couple of seconds. Your ranges are also saved when you leave the scene or close the tab. You can stop at any
 time, watch something else, and come back later, even on another device.
 
 When you open Trim mode again, a **Resume trimming at …** button takes you back

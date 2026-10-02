@@ -208,8 +208,7 @@
 }
 
 .sceneTrimmer-controls,
-.sceneTrimmer-status,
-.sceneTrimmer-info {
+.sceneTrimmer-status {
   align-items: center;
   background: rgba(20, 20, 20, 0.85);
   border-radius: 4px;
@@ -222,11 +221,6 @@
 .sceneTrimmer-controls {
   gap: 0.4em;
   padding: 0.4em;
-}
-
-.sceneTrimmer-info {
-  opacity: 0.9;
-  white-space: nowrap;
 }
 
 .sceneTrimmer-btn {
