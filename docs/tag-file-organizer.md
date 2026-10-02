@@ -21,15 +21,22 @@ Open **Settings → Plugins → Tag File Organizer**.
 
 | Setting | What it does |
 | --- | --- |
-| **Source folder** | Only files inside this folder (subfolders included) are moved, for example `/data/torrents`. Empty means every file in your library. |
+| **Source folder** | Only files inside this folder (subfolders included) are moved, for example `/data/torrents`. Empty means every file in your library. **Edit** opens a folder browser. |
 | **Rules** | Which tags go to which folder. See below. |
-| **Folder when no rule matches** | Optional. Files from the source folder that match no rule go here. Empty leaves them where they are. |
+| **Folder when no rule matches** | Optional. Picked the same way. Files from the source folder that match no rule go here. Empty leaves them where they are. |
 | **Move when a scene's tags change** | The hook: saving a scene moves its files straight away. |
 | **Allow the manual tasks to move files** | Lets the **Organize all scenes** task move files. |
 | **Dry run** | Only writes the moves to the log. |
 
 You pick how it runs: turn on either of the two "move" settings, or both.
 Neither is on by default, so installing the plugin never moves anything.
+
+For the two folder settings, **Edit** opens the same folder browser as adding a
+library folder: it starts at your library folders, clicking a folder opens it,
+and typing `/` or a path lists the folders inside it. **Confirm** saves the
+folder. If a Stash update ever breaks this, **Edit** opens a plain text box
+instead. The destinations
+in **Rules** are plain text, so type those out in full.
 
 ## Rules
 
