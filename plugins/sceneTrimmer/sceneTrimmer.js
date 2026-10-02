@@ -31,7 +31,7 @@
     "mutation SceneTrimmerOp($id: ID!, $args: Map) { runPluginOperation(plugin_id: $id, args: $args) }";
   const RUN_OP = gql(RUN_OP_SRC);
   const SCENE_INFO = gql(
-    "query SceneTrimmerScene($id: ID!) { findScene(id: $id) { id files { id duration frame_rate } } }"
+    "query SceneTrimmerScene($id: ID!) { findScene(id: $id) { id files { id duration } } }"
   );
   const RUN_TASK = gql(
     "mutation SceneTrimmerTask($id: ID!, $task: String!, $desc: String, $args: Map) { runPluginTask(plugin_id: $id, task_name: $task, description: $desc, args_map: $args) }"
@@ -219,7 +219,6 @@
     loadError: null,
     fileId: null,
     duration: 0,
-    fps: 30,
     rec: null,
     hasRecord: false,
     stale: false,
@@ -410,7 +409,6 @@
       loadError: null,
       fileId: null,
       duration: 0,
-      fps: 30,
       rec: null,
       hasRecord: false,
       stale: false,
@@ -469,7 +467,6 @@
 
     S.fileId = file.id;
     S.duration = file.duration || 0;
-    S.fps = file.frame_rate > 0 ? file.frame_rate : 30;
     if (backendError) {
       console.warn(LOG, "backend unavailable", backendError);
       S.loadError =
@@ -939,11 +936,6 @@
     if (!P) return;
     P.pause();
     P.currentTime(clamp(t, 0, S.duration || P.duration()));
-  }
-
-  function stepFrame(dir) {
-    if (!P) return;
-    seekTo(P.currentTime() + dir / S.fps);
   }
 
   function stepKeyframe(dir) {
@@ -1602,8 +1594,6 @@
           btn("◀K", () => stepKeyframe(-1), {
             title: kf ? "Previous keyframe  ↑" : "Back 1 second  ↑",
           }),
-          btn("−1f", () => stepFrame(-1), { title: "Back one frame" }),
-          btn("+1f", () => stepFrame(1), { title: "Forward one frame" }),
           btn("K▶", () => stepKeyframe(1), {
             title: kf ? "Next keyframe  ↓" : "Forward 1 second  ↓",
           }),

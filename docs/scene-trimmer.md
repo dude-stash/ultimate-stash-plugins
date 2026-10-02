@@ -62,7 +62,6 @@ frame you're cutting at.
 | --- | --- |
 | `↑` / **◀K** | Previous keyframe |
 | `↓` / **K▶** | Next keyframe |
-| **−1f** / **+1f** | One frame back / forward |
 | `[` / **Mark In** | Mark In |
 | `]` / **Mark Out** | Mark Out |
 | `x` / **Split** | Start a new scene here (see [splitting](#splitting-a-movie-into-scenes)) |
