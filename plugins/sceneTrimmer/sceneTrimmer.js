@@ -1258,7 +1258,8 @@
           onClick();
         },
       },
-      label
+      label,
+      opts.hint ? h("kbd", { className: "sceneTrimmer-key" }, opts.hint) : null
     );
   }
 
@@ -1581,11 +1582,12 @@
         h(
           "div",
           { className: "sceneTrimmer-group" },
-          btn("Mark In", markIn, { disabled: !editable, title: "Mark In  [" }),
-          btn("Mark Out", markOut, { disabled: !editable, title: "Mark Out  ]" }),
+          btn("Mark In", markIn, { disabled: !editable, title: "Mark In  [", hint: "[" }),
+          btn("Mark Out", markOut, { disabled: !editable, title: "Mark Out  ]", hint: "]" }),
           btn("Split", markSplit, {
             disabled: !editable,
             title: "Start a new scene here  x",
+            hint: "x",
           })
         ),
         h(
@@ -1593,9 +1595,11 @@
           { className: "sceneTrimmer-group" },
           btn("◀K", () => stepKeyframe(-1), {
             title: kf ? "Previous keyframe  ↑" : "Back 1 second  ↑",
+            hint: "↑",
           }),
           btn("K▶", () => stepKeyframe(1), {
             title: kf ? "Next keyframe  ↓" : "Forward 1 second  ↓",
+            hint: "↓",
           }),
           btn("Snap", toggleSnap, {
             active: S.snap && kf,
@@ -1622,6 +1626,7 @@
           btn("Preview", togglePreview, {
             active: S.preview,
             title: "Skip the cut parts while in Trim mode  \\",
+            hint: "\\",
           }),
           btn("Segments", () => {
             S.panelOpen = !S.panelOpen;
