@@ -40,9 +40,10 @@ do with them:
 ## Trimming
 
 1. Open a scene and press the **scissors button** in the player's control bar
-   (next to fullscreen). This turns on Trim mode, and a toolbar appears above
-   the seek bar. The controls stay visible while you're in Trim mode, and it
-   works in fullscreen.
+   (next to fullscreen). This turns on Trim mode: a tool box appears at the
+   left edge of the player, and **Snap**, **Preview** and **Segments** appear
+   at the bottom right. The controls stay visible while you're in Trim mode,
+   and it works in fullscreen.
 2. Play or scrub to where a range starts and press **Mark In** (`[`). Go to
    where it ends and press **Mark Out** (`]`).
    - While an In is open, the status line shows
@@ -60,16 +61,17 @@ frame you're cutting at.
 
 | Key / button | Does |
 | --- | --- |
-| `↑` / **◀K** | Previous keyframe |
-| `↓` / **K▶** | Next keyframe |
-| **−1f** / **+1f** | One frame back / forward |
 | `[` / **Mark In** | Mark In |
 | `]` / **Mark Out** | Mark Out |
 | `x` / **Split** | Start a new scene here (see [splitting](#splitting-a-movie-into-scenes)) |
-| `\` / **Preview** | Skip the cut parts while in Trim mode, to check your edit |
+| `↑` / **Previous keyframe** | Previous keyframe |
+| `↓` / **Next keyframe** | Next keyframe |
+| **Preview** | Skip the cut parts while in Trim mode, to check your edit (button only) |
 
-The keyboard shortcuts only work in Trim mode, so ↑/↓ scroll the page as usual
-otherwise. They are ignored while you're typing in a text field.
+The buttons in the tool box at the left are icons only; hover one for its name.
+Each shortcut is shown on its button. The keyboard shortcuts only work in Trim
+mode, so ↑/↓ scroll the page as usual otherwise. They are ignored while you're
+typing in a text field.
 
 **Snap** (on by default) moves every Mark In, Mark Out, split point and handle
 drag to the nearest keyframe. Keyframes are where a cut without re-encoding can actually
@@ -80,9 +82,9 @@ keyframes…" for a few seconds. After that they're cached. If they can't be
 read you'll see "Keyframes unavailable – ↑/↓ step 1 s", and ↑/↓ move by one
 second instead.
 
-The toolbar also shows the scene's mode, how much is kept out of the total
-length, and how many ranges there are, for example
-"Keep mode · kept 1:12:03 / 1:48:50 · 4 ranges".
+The top of the **Segments** panel shows how much is kept out of the total
+length and how many ranges there are, for example
+"Kept 1:12:03 / 1:48:50 · 4 ranges".
 
 ### Segments panel
 
@@ -98,7 +100,7 @@ length, and how many ranges there are, for example
   **Delete**.
 - **Create trimmed file…** and **Split into N scenes…**: see below.
 
-Press **Done** (or the scissors button again) to leave Trim mode.
+Press the scissors button again to leave Trim mode.
 
 ## Watching a trimmed scene
 
@@ -152,7 +154,7 @@ original file and scene are never changed by a failed trim.
 A movie with several scenes can become one Stash scene per scene, the way
 StashDB lists them. Go to where each new scene starts and press **Split**
 (`x`). A yellow line appears on the seek bar. 3 split points make 4 scenes;
-the toolbar shows the count, for example "· 4 scenes".
+the summary line shows the count, for example "· 4 scenes".
 
 Split points work together with the ranges: mark the repetitive parts too,
 and each new scene contains only its kept parts. A part that is entirely cut
@@ -189,8 +191,8 @@ an **Open group** link and **Dismiss**.
 ## Your work is always saved
 
 Every change is saved within half a second, including an In that you haven't
-closed yet and your split points. The status line shows "Saving…", then "Saved". Your ranges are
-also saved when you leave the scene or close the tab. You can stop at any
+closed yet and your split points. The status line shows "Saving…", then "Saved", which
+disappears after a couple of seconds. Your ranges are also saved when you leave the scene or close the tab. You can stop at any
 time, watch something else, and come back later, even on another device.
 
 When you open Trim mode again, a **Resume trimming at …** button takes you back
@@ -209,9 +211,8 @@ just keep editing; the next change tries again.
   new server, a restored database), it's restored from that field
   automatically and the status line says "Trim ranges restored from the
   scene's backup copy."
-- In the scene edit form, `ust_trim` is hidden from the custom fields editor
-  and shown as a note: "ust_trim holds this scene's trim ranges. It's managed
-  by Scene Trimmer and can't be edited here."
+- `ust_trim` is hidden from the scene's custom fields, both in the details
+  view and in the edit form, and is left untouched when you save the form.
 
 Ranges belong to the scene's primary file. If the primary file changes, the
 old ranges no longer line up, so they aren't applied. Trim mode then says

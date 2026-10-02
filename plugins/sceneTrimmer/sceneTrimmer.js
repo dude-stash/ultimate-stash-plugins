@@ -31,7 +31,7 @@
     "mutation SceneTrimmerOp($id: ID!, $args: Map) { runPluginOperation(plugin_id: $id, args: $args) }";
   const RUN_OP = gql(RUN_OP_SRC);
   const SCENE_INFO = gql(
-    "query SceneTrimmerScene($id: ID!) { findScene(id: $id) { id files { id duration frame_rate } } }"
+    "query SceneTrimmerScene($id: ID!) { findScene(id: $id) { id files { id duration } } }"
   );
   const RUN_TASK = gql(
     "mutation SceneTrimmerTask($id: ID!, $task: String!, $desc: String, $args: Map) { runPluginTask(plugin_id: $id, task_name: $task, description: $desc, args_map: $args) }"
@@ -219,7 +219,6 @@
     loadError: null,
     fileId: null,
     duration: 0,
-    fps: 30,
     rec: null,
     hasRecord: false,
     stale: false,
@@ -227,7 +226,7 @@
     defaultMode: "keep",
     keyframes: null,
     kfStatus: "idle",
-    saveStatus: "saved",
+    saveStatus: "idle",
     editing: false,
     preview: false,
     snap: true,
@@ -292,9 +291,20 @@
   let saveTimer = null;
   let saveWorker = null;
 
+  let savedTimer = null;
+
   function setSaveStatus(sceneId, status) {
     if (S.sceneId !== sceneId) return;
     S.saveStatus = status;
+    clearTimeout(savedTimer);
+    // "Saved" is only worth showing for a moment; "idle" shows nothing.
+    if (status === "saved") {
+      savedTimer = setTimeout(() => {
+        if (S.saveStatus !== "saved") return;
+        S.saveStatus = "idle";
+        notify();
+      }, 2000);
+    }
     notify();
   }
 
@@ -410,13 +420,12 @@
       loadError: null,
       fileId: null,
       duration: 0,
-      fps: 30,
       rec: null,
       hasRecord: false,
       stale: false,
       keyframes: null,
       kfStatus: "idle",
-      saveStatus: "saved",
+      saveStatus: "idle",
       preview: false,
       panelOpen: false,
       confirm: null,
@@ -469,7 +478,6 @@
 
     S.fileId = file.id;
     S.duration = file.duration || 0;
-    S.fps = file.frame_rate > 0 ? file.frame_rate : 30;
     if (backendError) {
       console.warn(LOG, "backend unavailable", backendError);
       S.loadError =
@@ -750,7 +758,7 @@
     const button = document.createElement("button");
     button.type = "button";
     button.className = "vjs-control vjs-button sceneTrimmer-toggle";
-    button.title = "Trim";
+    button.title = "Trim mode (click again to close)";
     button.innerHTML =
       '<span class="sceneTrimmer-toggle-icon">' +
       scissorsSvg() +
@@ -764,11 +772,12 @@
     barEl.insertBefore(button, fullscreen || null);
     ui.button = button;
 
-    // Inside the control bar, so it shows and hides with the controls in
-    // normal playback and goes fullscreen with the player.
+    // On the player itself rather than in the control bar: the tool box is
+    // anchored to the left edge, mid-height. It still goes fullscreen with the
+    // player, and the control bar is kept visible while editing anyway.
     const stripRoot = document.createElement("div");
     stripRoot.className = "sceneTrimmer-strip-root";
-    barEl.appendChild(stripRoot);
+    p.el().appendChild(stripRoot);
     ReactDOM.render(h(Strip), stripRoot);
     ui.stripRoot = stripRoot;
 
@@ -939,11 +948,6 @@
     if (!P) return;
     P.pause();
     P.currentTime(clamp(t, 0, S.duration || P.duration()));
-  }
-
-  function stepFrame(dir) {
-    if (!P) return;
-    seekTo(P.currentTime() + dir / S.fps);
   }
 
   function stepKeyframe(dir) {
@@ -1177,14 +1181,33 @@
     }
   }
 
+  // Mousetrap handles these. They're global, so they work with focus anywhere.
   const HOTKEYS = {
+    x: markSplit,
+  };
+
+  // Stash's own player hotkeys claim these keys on keydown: [ and ] seek by
+  // 10% of the video, ↑/↓ change the volume. That runs before Mousetrap sees
+  // the keypress, so Mark In read a time 10% earlier than the frame on screen.
+  // A capture listener on window gets there first and keeps the event from the
+  // player.
+  const PLAYER_KEYS = {
     "[": markIn,
     "]": markOut,
-    "\\": togglePreview,
-    x: markSplit,
-    up: () => stepKeyframe(-1),
-    down: () => stepKeyframe(1),
+    ArrowUp: () => stepKeyframe(-1),
+    ArrowDown: () => stepKeyframe(1),
   };
+
+  function onPlayerKey(e) {
+    if (!S.editing || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const action = PLAYER_KEYS[e.key];
+    if (!action) return;
+    const el = e.target;
+    if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    action();
+  }
 
   function enterEditing() {
     if (!P || S.editing) return;
@@ -1194,10 +1217,11 @@
     Object.keys(HOTKEYS).forEach((key) =>
       Mousetrap.bind(key, () => {
         HOTKEYS[key]();
-        // Stops the page scrolling on ↑/↓.
         return false;
       })
     );
+    // preventDefault in here also stops the page scrolling on ↑/↓.
+    window.addEventListener("keydown", onPlayerKey, true);
     S.resumeOffered =
       S.loaded &&
       !S.stale &&
@@ -1216,6 +1240,7 @@
     S.resumeOffered = false;
     if (alive(P)) P.removeClass("sceneTrimmer-editing");
     Object.keys(HOTKEYS).forEach((key) => Mousetrap.unbind(key));
+    window.removeEventListener("keydown", onPlayerKey, true);
     notify();
     flushSaves();
     if (alive(P)) enforce("seeked");
@@ -1225,6 +1250,40 @@
 
   // Clicking a button would leave focus on it, so the next Space would press
   // it again. Hand focus back to the player instead.
+  // Stroke icons on a 24x24 grid, drawn here so they don't depend on which
+  // FontAwesome icons Stash happens to expose to plugins.
+  const ICONS = {
+    markIn: ["M9 4H5v16h4", "M12 7l7 5-7 5z"],
+    markOut: ["M15 4h4v16h-4", "M12 7l-7 5 7 5z"],
+    split: ["M12 3v18", "M9 8l-4 4 4 4", "M15 8l4 4-4 4"],
+    keyBack: ["M18 6l-8 6 8 6z", "M6 5v14"],
+    keyForward: ["M6 6l8 6-8 6z", "M18 5v14"],
+    // snap, preview and segments are drawn within x 5..19 so their text sits
+    // the same distance from the icon.
+    snap: ["M5 3h4v9a3 3 0 0 0 6 0V3h4v9a7 7 0 0 1-14 0z"],
+    preview: ["M5 12s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z", "M12 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"],
+    segments: ["M10 7h9", "M10 12h9", "M10 17h9", "M5 7h.01", "M5 12h.01", "M5 17h.01"],
+  };
+
+  function icon(name) {
+    return h(
+      "svg",
+      {
+        className: "sceneTrimmer-icon",
+        viewBox: "0 0 24 24",
+        fill: "none",
+        stroke: "currentColor",
+        strokeWidth: 2,
+        strokeLinecap: "round",
+        strokeLinejoin: "round",
+        "aria-hidden": true,
+      },
+      ICONS[name].map((d, i) => h("path", { key: i, d: d }))
+    );
+  }
+
+  // opts.icon puts an icon before the label; opts.iconOnly drops the label
+  // text (it stays as the accessible name). opts.hint is the keyboard shortcut.
   function btn(label, onClick, opts) {
     opts = opts || {};
     return h(
@@ -1237,6 +1296,7 @@
           (opts.active ? " is-active" : "") +
           (opts.className ? " " + opts.className : ""),
         title: opts.title,
+        "aria-label": opts.iconOnly ? label : undefined,
         disabled: opts.disabled,
         onClick: (e) => {
           e.currentTarget.blur();
@@ -1244,7 +1304,9 @@
           onClick();
         },
       },
-      label
+      opts.icon ? icon(opts.icon) : null,
+      opts.iconOnly ? null : label,
+      opts.hint ? h("kbd", { className: "sceneTrimmer-key" }, opts.hint) : null
     );
   }
 
@@ -1323,7 +1385,8 @@
     }
     if (S.flash) items.push(h("span", { key: "flash" }, S.flash));
     const saveText = {
-      saved: S.hasRecord ? "Saved" : "",
+      idle: "",
+      saved: "Saved",
       dirty: "Saving…",
       saving: "Saving…",
       error: "Save failed – retry",
@@ -1450,6 +1513,18 @@
       { className: "sceneTrimmer-panel" },
       h(
         "div",
+        { className: "sceneTrimmer-muted" },
+        "Kept " +
+          fmt(S.keep ? total(S.keep) : S.duration, false) +
+          " / " +
+          fmt(S.duration, false) +
+          " · " +
+          rec.ranges.length +
+          (rec.ranges.length === 1 ? " range" : " ranges") +
+          (rec.splits.length ? " · " + (rec.splits.length + 1) + " scenes" : "")
+      ),
+      h(
+        "div",
         { className: "sceneTrimmer-row" },
         h("span", null, "Marked ranges are"),
         btn("Kept", () => requestMode("keep"), { active: rec.mode === "keep" }),
@@ -1545,78 +1620,93 @@
     if (!S.loaded) {
       return h(
         "div",
-        { className: "sceneTrimmer-strip" },
-        h("div", { className: "sceneTrimmer-status" }, S.loadError || "Loading…"),
-        h("div", { className: "sceneTrimmer-controls" }, btn("Done", exitEditing))
+        { className: "sceneTrimmer-side" },
+        h("div", { className: "sceneTrimmer-status" }, S.loadError || "Loading…")
       );
     }
 
-    const d = S.duration;
-    const kept = S.keep ? total(S.keep) : d;
     const editable = canEdit();
     const kf = hasKeyframes();
 
+    // Marking tools sit in a box at the left edge of the player, like a tool
+    // palette; the view toggles go bottom right. There's no Done button: the
+    // scissors in the control bar leaves Trim mode.
     return h(
-      "div",
-      { className: "sceneTrimmer-strip" },
-      S.panelOpen && !S.stale ? h(Panel) : null,
-      statusLine(),
+      React.Fragment,
+      null,
       h(
         "div",
-        { className: "sceneTrimmer-controls" },
+        { className: "sceneTrimmer-tools" },
+        btn("Mark In", markIn, {
+          icon: "markIn",
+          iconOnly: true,
+          disabled: !editable,
+          title: "Mark In  [",
+          hint: "[",
+        }),
+        btn("Mark Out", markOut, {
+          icon: "markOut",
+          iconOnly: true,
+          disabled: !editable,
+          title: "Mark Out  ]",
+          hint: "]",
+        }),
+        btn("Split", markSplit, {
+          icon: "split",
+          iconOnly: true,
+          disabled: !editable,
+          title: "Start a new scene here  x",
+          hint: "x",
+        }),
+        h("div", { className: "sceneTrimmer-sep" }),
+        btn("Previous keyframe", () => stepKeyframe(-1), {
+          icon: "keyBack",
+          iconOnly: true,
+          title: kf ? "Previous keyframe  ↑" : "Back 1 second  ↑",
+          hint: "↑",
+        }),
+        btn("Next keyframe", () => stepKeyframe(1), {
+          icon: "keyForward",
+          iconOnly: true,
+          title: kf ? "Next keyframe  ↓" : "Forward 1 second  ↓",
+          hint: "↓",
+        })
+      ),
+      h(
+        "div",
+        { className: "sceneTrimmer-side" },
+        S.panelOpen && !S.stale ? h(Panel) : null,
+        statusLine(),
         h(
           "div",
-          { className: "sceneTrimmer-group" },
-          btn("Mark In", markIn, { disabled: !editable, title: "Mark In  [" }),
-          btn("Mark Out", markOut, { disabled: !editable, title: "Mark Out  ]" }),
-          btn("Split", markSplit, {
-            disabled: !editable,
-            title: "Start a new scene here  x",
-          })
-        ),
-        h(
-          "div",
-          { className: "sceneTrimmer-group" },
-          btn("◀K", () => stepKeyframe(-1), {
-            title: kf ? "Previous keyframe  ↑" : "Back 1 second  ↑",
-          }),
-          btn("−1f", () => stepFrame(-1), { title: "Back one frame" }),
-          btn("+1f", () => stepFrame(1), { title: "Forward one frame" }),
-          btn("K▶", () => stepKeyframe(1), {
-            title: kf ? "Next keyframe  ↓" : "Forward 1 second  ↓",
-          }),
+          { className: "sceneTrimmer-controls" },
           btn("Snap", toggleSnap, {
+            icon: "snap",
+            className: "sceneTrimmer-btn-lg",
             active: S.snap && kf,
             disabled: !kf,
             title: "Snap In, Out and split points to the nearest keyframe",
-          })
-        ),
-        h(
-          "div",
-          { className: "sceneTrimmer-group sceneTrimmer-info" },
-          (S.rec.mode === "remove" ? "Remove mode" : "Keep mode") +
-            " · kept " +
-            fmt(kept, false) +
-            " / " +
-            fmt(d, false) +
-            " · " +
-            S.rec.ranges.length +
-            (S.rec.ranges.length === 1 ? " range" : " ranges") +
-            (S.rec.splits.length ? " · " + (S.rec.splits.length + 1) + " scenes" : "")
-        ),
-        h(
-          "div",
-          { className: "sceneTrimmer-group" },
-          btn("Preview", togglePreview, {
-            active: S.preview,
-            title: "Skip the cut parts while in Trim mode  \\",
           }),
-          btn("Segments", () => {
-            S.panelOpen = !S.panelOpen;
-            S.confirm = null;
-            notify();
-          }, { active: S.panelOpen, disabled: S.stale }),
-          btn("Done", exitEditing)
+          btn("Preview", togglePreview, {
+            icon: "preview",
+            className: "sceneTrimmer-btn-lg",
+            active: S.preview,
+            title: "Skip the cut parts while in Trim mode",
+          }),
+          btn(
+            "Segments",
+            () => {
+              S.panelOpen = !S.panelOpen;
+              S.confirm = null;
+              notify();
+            },
+            {
+              icon: "segments",
+              className: "sceneTrimmer-btn-lg",
+              active: S.panelOpen,
+              disabled: S.stale,
+            }
+          )
         )
       )
     );
@@ -1661,7 +1751,7 @@
 
   handleLocation(window.location.pathname);
 
-  // --- ust_trim custom field: read-only, hidden from the details view --------
+  // --- ust_trim custom field: read-only, hidden from the details and edit views
   //
   // The field is a backup copy the backend keeps up to date (the JSON file in
   // Stash's config dir is what's read). Stash's edit form submits the whole
@@ -1702,16 +1792,6 @@
       values: withoutField(values),
       onChange: (v) => props.onChange(Object.assign({}, v, { [FIELD]: kept })),
     });
-    return h(
-      React.Fragment,
-      null,
-      original.apply(this, [inner].concat(args.slice(1, -1))),
-      h(
-        "div",
-        { className: "sceneTrimmer-field-note text-muted small" },
-        h("code", null, FIELD),
-        " holds this scene's trim ranges. It's managed by Scene Trimmer and can't be edited here."
-      )
-    );
+    return original.apply(this, [inner].concat(args.slice(1, -1)));
   });
 })();
