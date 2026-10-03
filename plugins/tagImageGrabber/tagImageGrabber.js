@@ -1216,6 +1216,19 @@
     loadSources();
   }
 
+  // Tag cards also render inside the hover popover of a tag chip in a tag
+  // selector (e.g. a scene's Tags field). The popover is portalled, but React
+  // still bubbles its events up the component tree to the selector, which
+  // opens its dropdown on mousedown / touchend - before our click handler can
+  // stop anything. Swallow those two events on our own controls.
+  function stopSelectOpening(event) {
+    event.stopPropagation();
+  }
+  const selectSafeHandlers = {
+    onMouseDown: stopSelectOpening,
+    onTouchEnd: stopSelectOpening,
+  };
+
   // --- Exclude from scrapes ------------------------------------------
   //
   // Toggles a tag's name in Settings -> Scraping -> Excluded tag patterns, so
@@ -1297,6 +1310,7 @@
           ? `Stop excluding ${tag.name} from scrapes`
           : `Exclude ${tag.name} from scrapes`,
         "aria-pressed": excluded,
+        ...selectSafeHandlers,
         onClick: (event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -1471,6 +1485,16 @@
       "span",
       {
         className: "tag-image-grabber-clickable-image",
+        onMouseDown: (event) => {
+          if (event.currentTarget.closest(".tag-popover-card")) {
+            stopSelectOpening(event);
+          }
+        },
+        onTouchEnd: (event) => {
+          if (event.currentTarget.closest(".tag-popover-card")) {
+            stopSelectOpening(event);
+          }
+        },
         onClick: (event) => {
           if (!event.currentTarget.closest(".tag-popover-card")) return;
           event.preventDefault();
@@ -1493,6 +1517,7 @@
           "tag-image-grabber-card-action btn btn-secondary btn-sm",
         title: "Choose this tag's image from linked content",
         "aria-label": `Choose an image for ${tag.name}`,
+        ...selectSafeHandlers,
         onClick: (event) => {
           event.preventDefault();
           event.stopPropagation();
