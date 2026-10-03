@@ -69,7 +69,8 @@ frame you're cutting at.
 | **Preview** | Skip the cut parts while in Trim mode, to check your edit (button only) |
 
 The buttons in the tool box at the left are icons only; hover one for its name.
-Each shortcut is shown on its button. The keyboard shortcuts only work in Trim
+Stepping a keyframe doesn't pause: if the video is playing it keeps playing
+from the new spot. Each shortcut is shown on its button. The keyboard shortcuts only work in Trim
 mode, so ↑/↓ scroll the page as usual otherwise. They are ignored while you're
 typing in a text field.
 
@@ -106,7 +107,9 @@ Press the scissors button again to leave Trim mode.
 
 You don't need Trim mode for this. Whenever a scene has ranges and **Skip cut
 parts during playback** is on, the player jumps over the cut parts, including
-when you seek into one. After the last kept part the video ends normally, so
+when you seek into one. Seeking forward into a cut part lands at the start of
+the next kept part. Seeking backward (for example with ←) skips back over it,
+to the kept part before it. After the last kept part the video ends normally, so
 a queue moves on to the next scene. The scissors button is green when a scene
 is being trimmed.
 
