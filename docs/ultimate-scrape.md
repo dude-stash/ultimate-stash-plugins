@@ -55,8 +55,11 @@ recognise a face.
 
 ## Syncing a result onto your scene
 
-Every result has a **view** link, which opens it on stash-box, and - when you
-opened the search from a scene - a **sync** button.
+When a search finishes, the page scrolls down to the results.
+
+Every result has a **view** link (eye icon), which opens it on stash-box in a
+new tab, and - when you opened the search from a scene - a **sync** button
+(link icon). A spinner replaces the link icon while a sync is loading.
 
 Sync fetches that exact scene through your own Stash backend, so studios,
 performers and tags come back already matched against your library, then opens

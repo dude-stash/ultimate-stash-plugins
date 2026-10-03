@@ -22,7 +22,7 @@
   const { Button, Form, Table, Alert, Spinner, Nav, Modal } =
     PluginApi.libraries.Bootstrap;
   const { NavLink } = PluginApi.libraries.ReactRouterDOM;
-  const { faSearch } = PluginApi.libraries.FontAwesomeSolid;
+  const { faSearch, faEye, faLink } = PluginApi.libraries.FontAwesomeSolid;
 
   const ROUTE = "/plugins/ultimate-scrape";
   const SEARCH_FORM_ID = "ultimate-scrape-form";
@@ -467,8 +467,11 @@
         title: props.linkedStashId
           ? "Sync from this stash-box scene - this replaces the existing link"
           : "Sync fields from this stash-box scene and link it",
+        "aria-label": "sync",
       },
-      props.busyId === props.stashSceneId ? "loading..." : "sync",
+      props.busyId === props.stashSceneId
+        ? React.createElement(Spinner, { animation: "border", size: "sm" })
+        : React.createElement(PluginApi.components.Icon, { icon: faLink }),
       props.linkedStashId ? "*" : ""
     );
   }
@@ -553,6 +556,7 @@
     const [resultNote, setResultNote] = React.useState("");
     const [busyId, setBusyId] = React.useState(undefined);
     const [syncTarget, setSyncTarget] = React.useState(undefined);
+    const resultsRef = React.useRef(null);
 
     const [updateScene] = PluginApi.utils.StashService.useSceneUpdate();
     const [scrapeScene] = GQL.useScrapeSingleSceneLazyQuery({
@@ -762,6 +766,21 @@
         Toast.error(err);
       }
     }
+
+    // Bring a fresh result list into view: the form is tall enough that the
+    // results land below the fold, in the modal as well as on the page.
+    // scrollIntoView scrolls whichever ancestor actually scrolls.
+    React.useEffect(
+      function () {
+        if (sceneResult && resultsRef.current) {
+          resultsRef.current.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        }
+      },
+      [sceneResult]
+    );
 
     React.useEffect(
       function () {
@@ -1154,8 +1173,22 @@
                 href: siteUrl + "/scenes/" + s.id,
                 target: "_blank",
                 rel: "noreferrer",
+                title: "View on stash-box (opens in a new tab)",
+                "aria-label": "view",
+                // target="_blank" alone is not enough here: a click handler
+                // further up Stash's tree can swallow the click and navigate
+                // the current tab instead, so open the tab explicitly.
+                onClick: function (e) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  window.open(
+                    e.currentTarget.href,
+                    "_blank",
+                    "noopener,noreferrer"
+                  );
+                },
               },
-              "view"
+              React.createElement(PluginApi.components.Icon, { icon: faEye })
             )
           ),
           scene
@@ -1178,7 +1211,11 @@
       return React.createElement(
         React.Fragment,
         null,
-        React.createElement("p", { className: "mt-3" }, caption),
+        React.createElement(
+          "p",
+          { className: "mt-3", ref: resultsRef },
+          caption
+        ),
         React.createElement(
           Table,
           { striped: true, bordered: true, size: "sm" },
