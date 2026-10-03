@@ -32,7 +32,7 @@ Search a configured stash-box with the filters Stash never exposes.
 
 See the [user manual](docs/ultimate-scrape.md).
 
-### Tag Image Grabber (v0.12)
+### Tag Image Grabber (v0.14)
 
 Choose a tag image from linked images, scenes, or performers.
 
@@ -42,6 +42,7 @@ Choose a tag image from linked images, scenes, or performers.
 - Crop images with aspect-ratio controls.
 - Capture and crop frames from linked scenes.
 - Select images from linked performers.
+- Exclude a tag from scrapes with one click, from its card or its tag page.
 
 **Requirement:** The
 [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts/tree/main/plugins/CommunityScriptsUILibrary)
