@@ -22,6 +22,7 @@
   // from the keyframe the first one landed on.
   const EPS = 0.05;
   const KF_EPS = 0.04;
+  const KF_PLAY_BACK = 0.75;
   const MIN_LEN = 0.1;
   const SAVE_DELAY = 500;
 
@@ -634,6 +635,32 @@
     P.currentTime(t);
   }
 
+  // Where the player was at the last check, to tell a backward seek from
+  // playback or a forward seek. Only updated after enforce has looked at a
+  // seek, so it still holds the position the seek started from.
+  let lastTime = null;
+
+  function trackTime() {
+    lastTime = P ? P.currentTime() : null;
+  }
+
+  // A backward seek that lands in a cut part would otherwise be sent forward
+  // again, to the start of the next kept part, and look stuck. Instead skip
+  // the cut part backwards: land in the kept parts before it, as far before
+  // the cut part's end as the seek overshot it.
+  function backwardTarget(keep, i, t) {
+    if (i === 0) return keep[0][0];
+    let pos = -(keep[i][0] - t);
+    for (let j = 0; j < i; j++) pos += keep[j][1] - keep[j][0];
+    if (pos <= 0) return keep[0][0];
+    for (let j = 0; j < i; j++) {
+      const len = keep[j][1] - keep[j][0];
+      if (pos < len) return keep[j][0] + pos;
+      pos -= len;
+    }
+    return keep[0][0];
+  }
+
   function enforce(reason) {
     if (!P || seekTarget !== null) return;
     const keep = activeKeep();
@@ -643,9 +670,11 @@
     if (P.ended()) return;
 
     const t = P.currentTime();
-    for (const seg of keep) {
+    for (let i = 0; i < keep.length; i++) {
+      const seg = keep[i];
       if (t < seg[0] - EPS) {
-        jump(seg[0]);
+        const backward = lastTime !== null && t < lastTime - EPS;
+        jump(backward ? backwardTarget(keep, i, t) : seg[0]);
         return;
       }
       if (t < seg[1] - EPS) return;
@@ -669,6 +698,7 @@
     rafId = 0;
     if (!P || P.paused()) return;
     enforce("frame");
+    trackTime();
     rafId = requestAnimationFrame(frameLoop);
   }
 
@@ -679,15 +709,18 @@
   function attach(p) {
     detach();
     P = p;
+    lastTime = null;
     const handlers = {
       timeupdate: () => {
         enforce("time");
+        trackTime();
         if (S.editing && S.rec && S.rec.pending_in != null) renderOverlay();
       },
       seeked: () => {
         seekTarget = null;
         clearTimeout(seekGuard);
         enforce("seeked");
+        trackTime();
       },
       play: () => {
         enforce("play");
@@ -944,25 +977,29 @@
     flash("Range " + fmt(start) + " – " + fmt(t) + " added");
   }
 
-  function seekTo(t) {
+  function seekTo(t, keepPlaying) {
     if (!P) return;
-    P.pause();
+    if (!keepPlaying) P.pause();
     P.currentTime(clamp(t, 0, S.duration || P.duration()));
   }
 
   function stepKeyframe(dir) {
     if (!P) return;
+    // Stepping keeps a playing video playing. While it plays, the keyframe
+    // just jumped to is already behind the playhead, so "back" would land on
+    // it again; count anything within KF_PLAY_BACK of it as "at" it.
+    const playing = !P.paused();
     const now = P.currentTime();
     if (!hasKeyframes()) {
-      seekTo(now + dir);
+      seekTo(now + dir, playing);
       return;
     }
-    const t = dir < 0 ? prevKeyframe(now) : nextKeyframe(now);
+    const t = dir < 0 ? prevKeyframe(playing ? now - KF_PLAY_BACK : now) : nextKeyframe(now);
     if (t == null) {
       flash(dir < 0 ? "No earlier keyframe" : "No later keyframe");
       return;
     }
-    seekTo(t);
+    seekTo(t, playing);
   }
 
   function togglePreview() {
