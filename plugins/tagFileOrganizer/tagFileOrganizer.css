@@ -1,0 +1,65 @@
+/* Rules editor, inside Stash's setting modal. */
+
+.tfo-rule {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.tfo-rule-tags {
+  flex: 1 1 55%;
+  min-width: 0;
+}
+
+.tfo-rule-folder {
+  flex: 1 1 45%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tfo-rule-header {
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+  /* line the headings up with the columns of the rows below, which also hold
+     the Browse and delete buttons */
+  padding-right: 7.5rem;
+}
+
+.tfo-add {
+  margin-top: 0.25rem;
+}
+
+.tfo-folder-step-buttons {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
+/* While a folder is being picked, the modal's own Cancel/Confirm would save or
+   drop all the rules, so hide them until Back / "Use this folder". */
+.tfo-rules-dialog:has(.tfo-folder-step) .modal-footer {
+  display: none;
+}
+
+/* Summary on the settings page. */
+.tfo-summary li + li {
+  margin-top: 0.125rem;
+}
+
+@media (max-width: 575.98px) {
+  .tfo-rule {
+    flex-wrap: wrap;
+  }
+
+  .tfo-rule-tags {
+    flex-basis: 100%;
+  }
+
+  .tfo-rule-header {
+    display: none;
+  }
+}

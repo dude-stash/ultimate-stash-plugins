@@ -23,7 +23,6 @@ Open **Settings → Plugins → Tag File Organizer**.
 | --- | --- |
 | **Source folder** | Only files inside this folder (subfolders included) are moved, for example `/data/torrents`. Empty means every file in your library. |
 | **Rules** | Which tags go to which folder. See below. |
-| **Folder when no rule matches** | Optional. Files from the source folder that match no rule go here. Empty leaves them where they are. |
 | **Move when a scene's tags change** | The hook: saving a scene moves its files straight away. |
 | **Allow the manual tasks to move files** | Lets the **Organize all scenes** task move files. |
 | **Dry run** | Only writes the moves to the log. |
@@ -31,24 +30,41 @@ Open **Settings → Plugins → Tag File Organizer**.
 You pick how it runs: turn on either of the two "move" settings, or both.
 Neither is on by default, so installing the plugin never moves anything.
 
+**Edit** next to **Source folder** opens the same folder browser as adding a
+library folder: it starts at your library folders, clicking a folder opens it,
+and typing `/` or a path lists the folders inside it. **Confirm** saves it.
+
 ## Rules
 
-One rule per line, tags on the left and the destination folder on the right:
+The **Rules** setting lists your rules, for example
+**Straight + Threesome** → `/media/Straight/Threesome`. Click **Edit** to change
+them:
 
-```
-# Tag, Tag => /destination/folder
-Straight => /media/Straight
-Straight, Threesome => /media/Straight/Threesome
-Gay => /media/Gay
-```
+1. Click **Add rule**.
+2. Pick one or more tags from the tag list.
+3. Click **Browse**, choose the folder, and click **Use this folder**. **Back**
+   returns without changing it.
+4. Click **Confirm** to save the rules. The trash button deletes a rule.
 
-- A rule matches when the scene has **every** tag listed on its left side.
-- If several rules match, the one with the **most tags** wins. A scene tagged
-  `Straight` and `Threesome` goes to `/media/Straight/Threesome`, and a scene
-  tagged only `Straight` goes to `/media/Straight`. If two matching rules have
-  the same number of tags, the one listed first wins.
-- Tag names aren't case sensitive. Blank lines and lines starting with `#` are
-  ignored. A line that isn't in this form is skipped and noted in the log.
+Every rule needs at least one tag and a folder; **Confirm** tells you which
+rule is missing one.
+
+How a scene's folder is chosen:
+
+- A rule matches when the scene has **every** tag in it. Extra tags on the
+  scene don't matter.
+- If several rules match, the one with the **most tags** wins. With the rules
+  **Straight** → `/media/Straight` and **Straight + Threesome** →
+  `/media/Straight/Threesome`, a scene tagged Straight and Threesome goes to
+  the second folder, and a scene tagged only Straight goes to the first.
+- If the winning rules have the same number of tags, the one higher in the
+  list wins.
+- If no rule matches, the file stays where it is, and the log says so.
+- Renaming a tag doesn't break a rule.
+- Tags must match exactly: a parent tag doesn't count for its child tags.
+
+Rules from version 0.1, typed as text, keep working until you save the rules
+again. **Edit** shows the old text so you can set them up with the tag list.
 
 ## Running it
 

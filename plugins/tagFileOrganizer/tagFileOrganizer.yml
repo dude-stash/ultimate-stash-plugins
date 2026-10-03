@@ -1,13 +1,18 @@
 name: Tag File Organizer
-description: Move scene files on disk into folders based on their tags, including combo rules. Built for an inbox folder, such as a torrents folder, whose new downloads should end up sorted.
-version: 0.1.0
+description: Move scene files into folders based on their tags.
+version: 0.2.0
 exec:
   - python
   - "{pluginDir}/tagFileOrganizer.py"
 interface: raw
+ui:
+  javascript:
+    - tagFileOrganizer.js
+  css:
+    - tagFileOrganizer.css
 hooks:
   - name: Organize on scene update
-    description: Moves the scene's files when it is edited (for example when its tags change), if "Move when a scene's tags change" is on.
+    description: Moves a scene's files when it is saved, if enabled in the settings below.
     triggeredBy:
       - Scene.Update.Post
       - Scene.Create.Post
@@ -16,34 +21,30 @@ hooks:
 settings:
   runOnTagChange:
     displayName: Move when a scene's tags change
-    description: Move a scene's files as soon as you save it with new tags. New files found by a scan don't trigger this until they are edited, so use the manual task for those.
+    description: "Move a scene as soon as it is saved with new tags."
     type: BOOLEAN
   runManually:
     displayName: Allow the manual tasks to move files
-    description: Lets "Organize all scenes" actually move files. "Preview moves" always works. Turn on both this and the setting above to use both ways.
+    description: "Let the \"Organize all scenes\" task move files."
     type: BOOLEAN
   sourceFolder:
     displayName: Source folder
-    description: "Only files inside this folder (subfolders included) are moved, for example /data/torrents. Leave empty to consider every file in your library."
+    description: "Only move files inside this folder, e.g. your torrents folder. Empty means everywhere."
     type: STRING
   rules:
     displayName: Rules
-    description: "One rule per line: Tag, Tag => /destination/folder. A rule matches when the scene has every tag listed. When several rules match, the one with the most tags wins, then the one listed first. Lines starting with # are ignored. The destination must be inside one of your Stash library folders."
-    type: STRING
-  defaultFolder:
-    displayName: Folder when no rule matches
-    description: Optional. Files from the source folder that match no rule go here. Leave empty to leave them where they are.
+    description: "Pick tags and a folder for each rule. The rule with the most matching tags wins."
     type: STRING
   dryRun:
     displayName: Dry run
-    description: Only write the moves to the log, and don't move anything.
+    description: "Only log the moves, don't make them."
     type: BOOLEAN
 tasks:
   - name: Organize all scenes
-    description: Move every scene in the source folder according to your rules. Needs "Allow the manual tasks to move files".
+    description: Move every scene in the source folder according to your rules.
     defaultArgs:
       mode: organize
   - name: Preview moves
-    description: Write to the log what "Organize all scenes" would move, without moving anything.
+    description: Log what "Organize all scenes" would move, without moving anything.
     defaultArgs:
       mode: preview

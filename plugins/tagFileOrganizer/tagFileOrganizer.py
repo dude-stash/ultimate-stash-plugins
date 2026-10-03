@@ -83,40 +83,71 @@ def plugin_settings(stash):
 
 # --- rules -------------------------------------------------------------------
 
-def parse_rules(text):
-    """Parse "Tag A, Tag B => /folder" lines into [(frozenset(tags), folder)].
+def parse_rules(value):
+    """Parse the rules setting into [(frozenset(keys), folder)].
 
-    Tags are compared case-insensitively. Blank lines and # comments are
-    ignored; malformed lines are logged and skipped so one typo can't stop the
-    rest of the rules from working.
+    The settings page saves a JSON list, [{"tags": [{"id", "name"}], "folder"}],
+    and rules match on tag ids, so renaming a tag doesn't break them. v0.1
+    saved "Tag A, Tag B => /folder" lines instead; those still work, matched
+    by name, until the rules are saved again. Keys are "id:<id>" or
+    "name:<lowercased name>", the same keys scene_keys() builds for a scene.
     """
+    if not value:
+        return []
+    try:
+        data = json.loads(value)
+    except ValueError:
+        return parse_text_rules(value)
     rules = []
-    for n, line in enumerate((text or "").splitlines(), 1):
+    for n, rule in enumerate(data if isinstance(data, list) else [], 1):
+        rule = rule if isinstance(rule, dict) else {}
+        keys = frozenset("id:%s" % t["id"] for t in rule.get("tags") or []
+                         if isinstance(t, dict) and t.get("id"))
+        folder = (rule.get("folder") or "").strip()
+        if not keys or not folder:
+            # The settings page won't save such a rule; skip a hand-edited one
+            # rather than stop the others from working.
+            log("w", "rule %d ignored: it needs at least one tag and a folder" % n)
+            continue
+        rules.append((keys, folder))
+    return rules
+
+
+def parse_text_rules(text):
+    rules = []
+    for n, line in enumerate(text.splitlines(), 1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         left, sep, right = line.partition("=>")
-        tags = frozenset(t.strip().lower() for t in left.split(",") if t.strip())
+        keys = frozenset("name:" + t.strip().lower() for t in left.split(",") if t.strip())
         folder = right.strip()
-        if not sep or not tags or not folder:
+        if not sep or not keys or not folder:
             log("w", "rules line %d ignored, expected 'Tag, Tag => /folder': %s" % (n, line))
             continue
-        rules.append((tags, folder))
+        rules.append((keys, folder))
     return rules
 
 
-def pick_folder(rules, scene_tags, default_folder=""):
-    """The destination for a scene with these tags, or None to leave it alone.
+def scene_keys(tags):
+    keys = set()
+    for t in tags:
+        keys.add("id:%s" % t["id"])
+        keys.add("name:" + t["name"].lower())
+    return keys
+
+
+def pick_folder(rules, keys):
+    """The destination for a scene with these tag keys, or None to leave it.
 
     Of the rules whose tags are all on the scene, the one naming the most tags
-    wins, so "Straight, Threesome" beats "Straight". max() keeps the first of
+    wins, so "Straight + Threesome" beats "Straight". max() keeps the first of
     equals, which makes the rule listed first win a tie.
     """
-    have = {t.lower() for t in scene_tags}
-    matching = [r for r in rules if r[0] <= have]
-    if matching:
-        return max(matching, key=lambda r: len(r[0]))[1]
-    return default_folder or None
+    matching = [r for r in rules if r[0] <= keys]
+    if not matching:
+        return None
+    return max(matching, key=lambda r: len(r[0]))[1]
 
 
 def norm(path):
@@ -131,14 +162,13 @@ def is_inside(path, folder):
 
 # --- organizing --------------------------------------------------------------
 
-SCENE_FIELDS = "id title tags { name } files { id path }"
+SCENE_FIELDS = "id title tags { id name } files { id path }"
 
 
 def organize_scene(stash, scene, settings, rules, dry_run):
     """Returns "moved", "skipped" or "error" for the scene."""
     source = (settings.get("sourceFolder") or "").strip()
-    tags = [t["name"] for t in scene.get("tags") or []]
-    dest = pick_folder(rules, tags, (settings.get("defaultFolder") or "").strip())
+    dest = pick_folder(rules, scene_keys(scene.get("tags") or []))
     label = scene.get("title") or "scene %s" % scene["id"]
 
     result = "skipped"
@@ -193,8 +223,10 @@ def op_organize(stash, settings, rules, dry_run):
     source = (settings.get("sourceFolder") or "").strip()
     scene_filter = {}
     if source:
-        # Narrows the query; is_inside() still decides per file.
-        scene_filter = {"path": {"value": source, "modifier": "INCLUDES"}}
+        # Narrows the query; is_inside() still decides per file. The quotes
+        # matter: unquoted, Stash splits the path on spaces and matches any
+        # one word (getPathSearchClauseMany in pkg/sqlite).
+        scene_filter = {"path": {"value": '"%s"' % source, "modifier": "INCLUDES"}}
     counts = {"moved": 0, "skipped": 0, "error": 0}
     page = 1
     while True:
@@ -224,7 +256,8 @@ def main():
 
     settings = plugin_settings(stash)
     rules = parse_rules(settings.get("rules"))
-    if not rules and not (settings.get("defaultFolder") or "").strip():
+    if not rules:
+        log("i", "no rules configured")
         return "no rules configured"
 
     if mode == "hook":
