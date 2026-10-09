@@ -11,10 +11,12 @@ Operations (args.mode):
   load       read a scene's trim record
   save       write (or with trim=null, delete) a scene's trim record
   keyframes  list the primary file's keyframe times via ffprobe
-  trim       (task) cut the kept parts into a new file with ffmpeg, no re-encode;
-             with kind=split, one new file per part between split points
-  finalize   (task) attach the trimmed file to the scene as its primary file,
-             or set up the split scenes in a group
+  trim       (task) cut the kept parts into a new file with ffmpeg, by default
+             without re-encoding; encode={codec,crf,height,preset} re-encodes
+             instead, and whole=true encodes the whole file (no cuts). With
+             kind=split, one new file per part between split points
+  finalize   (task) attach the new file to the scene (as its primary file,
+             depending on the settings), or set up the split scenes in a group
   export_status / export_clear   read / dismiss the state of the last trim
 """
 
@@ -445,10 +447,81 @@ def plugin_settings(stash):
         return {}
 
 
+# --- export: encode options --------------------------------------------------
+
+CODECS = {"h264": ("libx264", 23), "h265": ("libx265", 28)}
+PRESETS = ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow",
+           "slower", "veryslow")
+# Audio the mp4 container takes as it is; anything else is encoded to AAC.
+MP4_AUDIO = ("aac", "mp3", "ac3", "eac3", "alac")
+
+
+def clamp_int(v, lo, hi, default):
+    f = to_float(v)
+    return default if f is None else int(max(lo, min(hi, round(f))))
+
+
+def parse_encode(raw, settings):
+    """Encode options from a task argument, filled in from the plugin settings.
+
+    None means stream copy. Unknown or out-of-range values fall back to the
+    settings' (or built-in) defaults, so a bad value never reaches ffmpeg.
+    """
+    if not isinstance(raw, dict):
+        return None
+    codec = raw.get("codec")
+    if codec == "copy" or codec is None and not raw:
+        return None
+    if codec not in CODECS:
+        codec = settings.get("encodeCodec") if settings.get("encodeCodec") in CODECS else "h265"
+    preset = raw.get("preset")
+    if preset not in PRESETS:
+        preset = settings.get("encodePreset") if settings.get("encodePreset") in PRESETS else "medium"
+    default_crf = clamp_int(settings.get("encodeCrf"), 0, 51, CODECS[codec][1])
+    return {
+        "codec": codec,
+        "crf": clamp_int(raw.get("crf"), 0, 51, default_crf),
+        "height": clamp_int(raw.get("height"), 0, 4320, 0),
+        "preset": preset,
+    }
+
+
+def encode_label(enc):
+    return "%s-crf%d%s" % (enc["codec"], enc["crf"], "-%dp" % enc["height"] if enc["height"] else "")
+
+
+def probe_audio_codec(ffprobe, path):
+    out = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "a:0", "-show_entries",
+         "stream=codec_name", "-of", "default=nw=1:nk=1", path],
+        capture_output=True, text=True, check=False,
+    )
+    return out.stdout.strip() or None
+
+
+def encode_args(enc, audio_codec):
+    """ffmpeg output options for a re-encode: first video and every audio stream."""
+    args = ["-map", "0:v:0", "-map", "0:a?", "-sn", "-dn", "-map_metadata", "0",
+            "-c:v", CODECS[enc["codec"]][0], "-crf", str(enc["crf"]),
+            "-preset", enc["preset"], "-pix_fmt", "yuv420p"]
+    if enc["codec"] == "h265":
+        # Without the hvc1 tag Safari and the Chromecast won't play HEVC in mp4.
+        args += ["-tag:v", "hvc1"]
+    if enc["height"]:
+        # Never upscale, and keep the height even (the width follows with -2).
+        args += ["-vf", "scale=-2:'min(%d,trunc(ih/2)*2)'" % enc["height"]]
+    if audio_codec in MP4_AUDIO:
+        args += ["-c:a", "copy"]
+    else:
+        args += ["-c:a", "aac", "-b:a", "192k"]
+    return args
+
+
 # --- export: cutting ---------------------------------------------------------
 
-def unique_output(src, suffix):
-    stem, ext = os.path.splitext(src)
+def unique_output(src, suffix, ext=None):
+    stem, src_ext = os.path.splitext(src)
+    ext = ext or src_ext
     candidate = "%s.%s%s" % (stem, suffix, ext)
     n = 2
     while os.path.exists(candidate):
@@ -489,14 +562,18 @@ def concat_quote(path):
     return "'" + path.replace("'", "'\\''") + "'"
 
 
-def cut_file(tools, src_path, segments, out_path, keyframes, progress, log_prefix):
-    """Write segments of src_path, joined, to out_path without re-encoding.
+def cut_file(tools, src_path, segments, out_path, keyframes, progress, log_prefix, enc=None):
+    """Write segments of src_path, joined, to out_path.
+
+    Stream copy unless enc says to re-encode (then every part is encoded with
+    the same settings, so they still join without another pass).
 
     progress(fraction) is called with 0..1 for this file. Returns the parts:
     where each segment came from and where it landed in the new file.
     """
     ffmpeg, ffprobe = tools
-    ext = os.path.splitext(src_path)[1]
+    ext = ".mp4" if enc else os.path.splitext(src_path)[1]
+    audio_codec = probe_audio_codec(ffprobe, src_path) if enc else None
     total = sum(b - a for a, b in segments) or 1.0
     # Parts go in a hidden folder beside the source: same disk (so the final
     # move is a rename), and never under a video file name a scan could pick
@@ -510,20 +587,30 @@ def cut_file(tools, src_path, segments, out_path, keyframes, progress, log_prefi
             part = os.path.join(tmp, "part%03d%s" % (i, ext))
             log("i", "%s: cutting part %d/%d (%.1f-%.1f s)" % (log_prefix, i + 1, len(segments), a, b))
             # -ss before -i with stream copy starts the part on the keyframe at
-            # or before a (like Avidemux); -t is counted from a.
+            # or before a (like Avidemux); -t is counted from a. When encoding,
+            # the same -ss is frame-accurate, since ffmpeg decodes up to a.
+            cmd = [ffmpeg, "-hide_banner", "-nostdin", "-v", "error", "-y",
+                   "-ss", "%.3f" % a, "-i", src_path, "-t", "%.3f" % (b - a)]
+            if enc:
+                cmd += encode_args(enc, audio_codec)
+            else:
+                cmd += ["-map", "0", "-dn", "-ignore_unknown", "-c", "copy",
+                        "-avoid_negative_ts", "make_zero", "-map_metadata", "0"]
+            if enc and ext == ".mp4" and len(segments) == 1:
+                cmd += ["-movflags", "+faststart"]
+            cmd += ["-progress", "pipe:1", "-nostats", part]
             run_ffmpeg(
-                [ffmpeg, "-hide_banner", "-nostdin", "-v", "error", "-y",
-                 "-ss", "%.3f" % a, "-i", src_path, "-t", "%.3f" % (b - a),
-                 "-map", "0", "-dn", "-ignore_unknown", "-c", "copy",
-                 "-avoid_negative_ts", "make_zero", "-map_metadata", "0",
-                 "-progress", "pipe:1", "-nostats", part],
+                cmd,
                 lambda t, done=done, a=a, b=b: progress(0.88 * (done + min(t, b - a)) / total),
             )
             d = probe_duration(ffprobe, part)
             # Where the part really starts. Estimating it from the part's length
             # would be off by the audio padding and shift every marker.
             before = [k for k in keyframes if k <= a + 0.001]
-            actual = before[-1] if before else max(0.0, min(a, b - d))
+            if enc:
+                actual = a
+            else:
+                actual = before[-1] if before else max(0.0, min(a, b - d))
             parts.append({"src_start": a, "src_end": b, "out_dur": d, "actual_start": actual})
             done += b - a
 
@@ -569,8 +656,13 @@ def intersect(segments, a, b):
     return out
 
 
-def plan_outputs(rec, duration, kind):
-    """[(index, segments)] to write. index is the scene number for splits."""
+def plan_outputs(rec, duration, kind, whole=False):
+    """[(index, segments)] to write. index is the scene number for splits.
+
+    whole: re-encode the entire file, ignoring any ranges (the file isn't cut).
+    """
+    if whole and kind != "split":
+        return [(1, [[0.0, duration]])]
     keep = keep_segments(rec, duration)
     if kind == "split":
         if not rec["splits"]:
@@ -596,8 +688,11 @@ def plan_outputs(rec, duration, kind):
 
 # --- export: trim task -------------------------------------------------------
 
-def op_trim(conn, stash, scene_id, kind):
+def op_trim(conn, stash, scene_id, kind, encode=None, whole=False):
     kind = "split" if kind == "split" else "trim"
+    enc = parse_encode(encode, plugin_settings(stash))
+    # Without encoding there is nothing to do to a file that isn't cut.
+    whole = bool(whole) and enc is not None and kind == "trim"
     rec = read_json(scene_path(conn, scene_id))
     rec = sanitize(rec) if rec else None
     scene = stash.call(
@@ -607,13 +702,14 @@ def op_trim(conn, stash, scene_id, kind):
     if scene is None or not scene["files"]:
         raise RuntimeError("scene %d has no file" % scene_id)
     src = scene["files"][0]
-    if not rec or not (rec["ranges"] or rec["splits"]):
-        raise RuntimeError("Nothing is marked on this scene.")
-    if rec["file_id"] != src["id"]:
-        raise RuntimeError("The ranges were marked on a different file of this scene.")
+    if not whole:
+        if not rec or not (rec["ranges"] or rec["splits"]):
+            raise RuntimeError("Nothing is marked on this scene.")
+        if rec["file_id"] != src["id"]:
+            raise RuntimeError("The ranges were marked on a different file of this scene.")
 
     duration = src["duration"] or 0
-    planned = plan_outputs(rec, duration, kind)
+    planned = plan_outputs(rec, duration, kind, whole)
 
     tools = tool_paths(stash)
     for tool in tools:
@@ -621,7 +717,8 @@ def op_trim(conn, stash, scene_id, kind):
             raise RuntimeError("%s not found" % tool)
 
     try:
-        keyframes = op_keyframes(conn, stash, scene_id)["keyframes"]
+        # Only the stream-copy path lands on keyframes.
+        keyframes = [] if enc else op_keyframes(conn, stash, scene_id)["keyframes"]
     except Exception as err:
         log("w", "scene %d: no keyframes (%s); marker times will be approximate" % (scene_id, err))
         keyframes = []
@@ -630,7 +727,7 @@ def op_trim(conn, stash, scene_id, kind):
     exp = Export(conn, scene_id)
     exp.update(kind=kind, status="cutting", progress=0.0, token=token, message=None,
                source_file_id=src["id"], source_path=src["path"], outputs=[],
-               scene_count=len(planned), started=now())
+               scene_count=len(planned), started=now(), encode=enc, whole=whole)
 
     grand = sum(sum(b - a for a, b in segs) for _, segs in planned) or 1.0
     before = 0.0
@@ -638,8 +735,13 @@ def op_trim(conn, stash, scene_id, kind):
     try:
         for index, segs in planned:
             size = sum(b - a for a, b in segs)
-            out_path = unique_output(
-                src["path"], "trimmed" if kind == "trim" else "scene-%02d" % index)
+            if kind == "split":
+                suffix = "scene-%02d" % index
+            else:
+                suffix = "encoded" if whole else "trimmed"
+            if enc:
+                suffix += "-" + encode_label(enc)
+            out_path = unique_output(src["path"], suffix, ".mp4" if enc else None)
 
             def progress(p, before=before, size=size, index=index):
                 p = (before + size * max(0.0, min(1.0, p))) / grand
@@ -647,7 +749,7 @@ def op_trim(conn, stash, scene_id, kind):
                 exp.update(force=False, progress=p, current=index)
 
             parts = cut_file(tools, src["path"], segs, out_path, keyframes, progress,
-                             "scene %d" % scene_id)
+                             "scene %d" % scene_id, enc)
             outputs.append({"index": index, "path": out_path, "parts": parts})
             log("i", "scene %d: wrote %s" % (scene_id, out_path))
             before += size
@@ -748,6 +850,15 @@ def generate(stash, scene_ids):
     )
 
 
+def choose_primary(setting, orig_size, new_size):
+    """True if the new file should become the scene's primary file."""
+    if setting == "original":
+        return False
+    if setting == "smaller" and orig_size and new_size:
+        return new_size < orig_size
+    return True
+
+
 def finalize_trim(conn, stash, scene_id, exp):
     st = exp.state
     out = st["outputs"][0]
@@ -762,39 +873,64 @@ def finalize_trim(conn, stash, scene_id, exp):
             {"input": {"source": [new_scene["id"]], "destination": str(scene_id),
                        "play_history": False, "o_history": False}},
         )
-    # Separate call: merge never changes the destination's primary file.
-    stash.call(
-        "mutation($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
-        {"input": {"id": str(scene_id), "primary_file_id": new_file["id"], "resume_time": 0}},
-    )
+
+    settings = plugin_settings(stash)
+    sizes = {f["id"]: f.get("size") for f in stash.call(
+        "query($id: ID!) { findScene(id: $id) { files { id size } } }",
+        {"id": str(scene_id)})["findScene"]["files"]}
+    becomes_primary = choose_primary(
+        settings.get("primaryAfterExport"), sizes.get(st["source_file_id"]), sizes.get(new_file["id"]))
+    log("i", "scene %d: sizes original %s, new %s -> %s file is primary"
+        % (scene_id, sizes.get(st["source_file_id"]), sizes.get(new_file["id"]),
+           "new" if becomes_primary else "original"))
 
     moved = removed = 0
-    for m in scene_markers(stash, scene_id):
-        mapped = remap_marker(m["seconds"], m.get("end_seconds"), out["parts"])
-        if mapped is None:
-            stash.call("mutation($id: ID!) { sceneMarkerDestroy(id: $id) }", {"id": m["id"]})
-            removed += 1
+    if becomes_primary:
+        # Separate call: merge never changes the destination's primary file.
+        stash.call(
+            "mutation($input: SceneUpdateInput!) { sceneUpdate(input: $input) { id } }",
+            {"input": {"id": str(scene_id), "primary_file_id": new_file["id"], "resume_time": 0}},
+        )
+        if st.get("whole"):
+            # Same timeline as before: markers and ranges still fit, they just
+            # belong to the new file now.
+            rec = read_json(scene_path(conn, scene_id))
+            if rec:
+                rec = sanitize(rec)
+                rec["file_id"] = new_file["id"]
+                op_save(conn, stash, scene_id, rec)
         else:
-            stash.call(
-                "mutation($input: SceneMarkerUpdateInput!) { sceneMarkerUpdate(input: $input) { id } }",
-                {"input": {"id": m["id"], "seconds": round(mapped[0], 3),
-                           "end_seconds": round(mapped[1], 3) if mapped[1] is not None else None}},
-            )
-            moved += 1
-    log("i", "scene %d: %d markers moved, %d removed (they were in cut parts)" % (scene_id, moved, removed))
-
-    # The ranges described the old file; the new primary file is already cut.
-    op_save(conn, stash, scene_id, None)
+            for m in scene_markers(stash, scene_id):
+                mapped = remap_marker(m["seconds"], m.get("end_seconds"), out["parts"])
+                if mapped is None:
+                    stash.call("mutation($id: ID!) { sceneMarkerDestroy(id: $id) }", {"id": m["id"]})
+                    removed += 1
+                else:
+                    stash.call(
+                        "mutation($input: SceneMarkerUpdateInput!) { sceneMarkerUpdate(input: $input) { id } }",
+                        {"input": {"id": m["id"], "seconds": round(mapped[0], 3),
+                                   "end_seconds": round(mapped[1], 3) if mapped[1] is not None else None}},
+                    )
+                    moved += 1
+            log("i", "scene %d: %d markers moved, %d removed (they were in cut parts)"
+                % (scene_id, moved, removed))
+            # The ranges described the old file; the new primary file is already cut.
+            op_save(conn, stash, scene_id, None)
+    # Otherwise the original stays primary, so its markers and ranges stay valid.
 
     generate(stash, [scene_id])
-    if plugin_settings(stash).get("deleteOriginal"):
-        stash.call("mutation($ids: [ID!]!) { deleteFiles(ids: $ids) }",
-                   {"ids": [st["source_file_id"]]})
-        log("i", "scene %d: deleted the original file %s" % (scene_id, st["source_path"]))
+    if settings.get("deleteOriginal"):
+        if becomes_primary:
+            stash.call("mutation($ids: [ID!]!) { deleteFiles(ids: $ids) }",
+                       {"ids": [st["source_file_id"]]})
+            log("i", "scene %d: deleted the original file %s" % (scene_id, st["source_path"]))
+        else:
+            log("i", "scene %d: kept the original file, it is still the primary one" % scene_id)
 
     exp.update(status="done", progress=1.0, new_file_id=new_file["id"],
+               new_is_primary=becomes_primary,
                markers_moved=moved, markers_removed=removed, finished=now())
-    return {"new_file_id": new_file["id"]}
+    return {"new_file_id": new_file["id"], "primary": becomes_primary}
 
 
 def finalize_split(conn, stash, scene_id, exp):
@@ -895,7 +1031,8 @@ def main():
     if mode == "export_clear":
         return op_export_clear(conn, scene_id)
     if mode == "trim":
-        return op_trim(conn, stash, scene_id, args.get("kind"))
+        return op_trim(conn, stash, scene_id, args.get("kind"), args.get("encode"),
+                       args.get("whole"))
     if mode == "finalize":
         return op_finalize(conn, stash, scene_id, args.get("token"))
     raise RuntimeError("unknown mode %r" % mode)

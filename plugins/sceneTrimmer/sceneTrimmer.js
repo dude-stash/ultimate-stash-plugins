@@ -78,18 +78,39 @@
     return res.data.findScene;
   }
 
-  async function fetchDefaultMode() {
+  async function fetchSettings() {
     try {
       const res = await client().query({
         query: SETTINGS,
         fetchPolicy: "no-cache",
       });
-      const cfg = (res.data.configuration.plugins || {})[PLUGIN_ID] || {};
-      return cfg.markedRangesRemove ? "remove" : "keep";
+      return (res.data.configuration.plugins || {})[PLUGIN_ID] || {};
     } catch (err) {
       console.warn(LOG, "could not read plugin settings", err);
-      return "keep";
+      return {};
     }
+  }
+
+  // --- encode options -------------------------------------------------------
+
+  const CRF_DEFAULT = { h264: 23, h265: 28 };
+  const HEIGHTS = [0, 1080, 720, 480, 360];
+  const PRESETS = ["ultrafast", "veryfast", "faster", "fast", "medium", "slow", "slower"];
+
+  function encodeFromSettings(cfg) {
+    const codec = cfg.encodeCodec === "h264" || cfg.encodeCodec === "h265" ? cfg.encodeCodec : "copy";
+    const crf = Number(cfg.encodeCrf);
+    const height = Number(cfg.encodeHeight);
+    return {
+      codec: codec,
+      crf: Number.isFinite(crf) && cfg.encodeCrf !== "" && cfg.encodeCrf != null ? crf : null,
+      height: HEIGHTS.indexOf(height) >= 0 ? height : 0,
+      preset: PRESETS.indexOf(cfg.encodePreset) >= 0 ? cfg.encodePreset : "medium",
+    };
+  }
+
+  function crfOf(enc) {
+    return enc.crf != null ? enc.crf : CRF_DEFAULT[enc.codec === "h264" ? "h264" : "h265"];
   }
 
   // Used only on pagehide, where an Apollo request would be cancelled along
@@ -225,6 +246,11 @@
     stale: false,
     keep: null,
     defaultMode: "keep",
+    // What "Create trimmed file", "Split" and "Re-encode" will write: codec
+    // "copy" is a stream-copy cut, the rest re-encodes. Starts from the settings.
+    encode: { codec: "copy", crf: null, height: 0, preset: "medium" },
+    encodeDefaults: { codec: "copy", crf: null, height: 0, preset: "medium" },
+    primaryAfterExport: "new",
     keyframes: null,
     kfStatus: "idle",
     saveStatus: "idle",
@@ -451,12 +477,19 @@
           backendError = err;
           return null;
         }),
-        fetchDefaultMode(),
+        fetchSettings(),
         runOp({ mode: "export_status", scene_id: sceneId }).catch(() => null),
       ]);
       info = results[0];
       loaded = results[1];
-      S.defaultMode = results[2];
+      const cfg = results[2];
+      S.defaultMode = cfg.markedRangesRemove ? "remove" : "keep";
+      S.encodeDefaults = encodeFromSettings(cfg);
+      S.encode = Object.assign({}, S.encodeDefaults);
+      S.primaryAfterExport =
+        cfg.primaryAfterExport === "original" || cfg.primaryAfterExport === "smaller"
+          ? cfg.primaryAfterExport
+          : "new";
       // A finished trim needs no mention (the page reloaded into it); a
       // finished split stays up until dismissed, with a link to its group.
       const exp = results[3];
@@ -1098,11 +1131,12 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  async function startExport(kind) {
+  async function startExport(kind, whole) {
     if (!canEdit()) return;
     const sceneId = S.sceneId;
     S.confirm = null;
-    S.export = { status: "queued", progress: 0, kind: kind };
+    const enc = S.encode.codec === "copy" ? null : S.encode;
+    S.export = { status: "queued", progress: 0, kind: kind, whole: !!whole, encode: enc };
     notify();
     try {
       // The task reads the saved record, so the latest edits must be in it.
@@ -1117,10 +1151,20 @@
           task: "Trim scene",
           desc:
             "Scene Trimmer: " +
-            (kind === "split" ? "split" : "trim") +
+            (kind === "split" ? "split" : whole ? "re-encode" : "trim") +
             " scene " +
             sceneId,
-          args: { scene_id: sceneId, kind: kind },
+          args: {
+            scene_id: sceneId,
+            kind: kind,
+            whole: !!whole,
+            encode: enc && {
+              codec: enc.codec,
+              crf: crfOf(enc),
+              height: enc.height,
+              preset: enc.preset,
+            },
+          },
         },
         fetchPolicy: "no-cache",
       });
@@ -1171,7 +1215,10 @@
           } else if (st.status === "done") {
             S.export = st;
             notify();
-            flash("Trimmed file added to the scene – reloading…");
+            flash(
+              (S.export.whole ? "Re-encoded file" : "Trimmed file") +
+                " added to the scene – reloading…"
+            );
             await sleep(1500);
             if (S.sceneId === sceneId) window.location.reload();
             return;
@@ -1203,8 +1250,10 @@
     switch (e.status) {
       case "queued":
         return "Trim queued – waiting for other Stash tasks…";
-      case "cutting":
-        return (e.kind === "split" ? "Creating the scene files… " : "Creating trimmed file… ") + pct;
+      case "cutting": {
+        const what = e.kind === "split" ? "Creating the scene files… " : e.whole ? "Re-encoding… " : "Creating trimmed file… ";
+        return (e.encode && !e.whole ? "Encoding: " + what : what) + pct;
+      }
       case "joining":
         return "Joining the parts… " + pct;
       case "scanning":
@@ -1440,6 +1489,110 @@
       : null;
   }
 
+  function setEncode(patch) {
+    S.encode = Object.assign({}, S.encode, patch);
+    notify();
+  }
+
+  // The Output choice shared by the trim, split and re-encode dialogs.
+  function encodeControls(allowCopy) {
+    const enc = S.encode;
+    const choices = (allowCopy ? ["copy"] : []).concat(["h264", "h265"]);
+    const label = { copy: "Copy", h264: "H.264", h265: "H.265" };
+    const field = (name, control) =>
+      h("label", { key: name, className: "sceneTrimmer-field" }, h("span", null, name), control);
+    const rows = [
+      h(
+        "div",
+        { key: "codec", className: "sceneTrimmer-row" },
+        h("span", null, "Output"),
+        choices.map((c) =>
+          btn(label[c], () => setEncode({ codec: c }), {
+            key: c,
+            active: enc.codec === c,
+            title:
+              c === "copy"
+                ? "Cut without re-encoding: fast and lossless, but cuts land on keyframes"
+                : "Re-encode the video with " + label[c],
+          })
+        )
+      ),
+    ];
+    if (enc.codec !== "copy") {
+      rows.push(
+        h(
+          "div",
+          { key: "opts", className: "sceneTrimmer-row" },
+          field(
+            "CRF",
+            h("input", {
+              type: "number",
+              min: 0,
+              max: 51,
+              className: "sceneTrimmer-input",
+              value: crfOf(enc),
+              title: "Quality: lower is better and bigger. Around 18-24 for H.264, 22-30 for H.265",
+              onChange: (e) => {
+                const v = parseInt(e.target.value, 10);
+                setEncode({ crf: Number.isFinite(v) ? Math.max(0, Math.min(51, v)) : null });
+              },
+            })
+          ),
+          field(
+            "Height",
+            h(
+              "select",
+              {
+                className: "sceneTrimmer-input",
+                value: enc.height,
+                title: "Scale down to this height; smaller videos are never scaled up",
+                onChange: (e) => setEncode({ height: parseInt(e.target.value, 10) }),
+              },
+              HEIGHTS.map((v) => h("option", { key: v, value: v }, v ? v + "p" : "Original"))
+            )
+          ),
+          field(
+            "Preset",
+            h(
+              "select",
+              {
+                className: "sceneTrimmer-input",
+                value: enc.preset,
+                title: "Slower presets make smaller files at the same quality",
+                onChange: (e) => setEncode({ preset: e.target.value }),
+              },
+              PRESETS.map((v) => h("option", { key: v, value: v }, v))
+            )
+          )
+        ),
+        h(
+          "div",
+          { key: "note", className: "sceneTrimmer-muted" },
+          "Re-encoding is slow and writes an .mp4. Audio is kept as it is where the mp4 allows, otherwise it becomes AAC; subtitles are dropped."
+        )
+      );
+    }
+    return h("div", { className: "sceneTrimmer-encode" }, rows);
+  }
+
+  function openExportConfirm(kind, whole) {
+    // A whole-file export only makes sense as a re-encode.
+    if (whole && S.encode.codec === "copy") {
+      const d = S.encodeDefaults.codec;
+      S.encode = Object.assign({}, S.encode, { codec: d === "copy" ? "h265" : d });
+    }
+    S.confirm = { kind: kind, whole: !!whole };
+    notify();
+  }
+
+  function primaryText() {
+    return S.primaryAfterExport === "original"
+      ? "the original stays the main file"
+      : S.primaryAfterExport === "smaller"
+      ? "the smaller of the two becomes the main file"
+      : "it becomes this scene's main file";
+  }
+
   function Panel() {
     const rec = S.rec;
     const markedWord = rec.mode === "remove" ? "removed" : "kept";
@@ -1467,24 +1620,38 @@
         })
       );
     } else if (S.confirm && S.confirm.kind === "export") {
+      const whole = !!S.confirm.whole;
+      const copy = S.encode.codec === "copy";
       confirm = h(
         "div",
         { className: "sceneTrimmer-confirm" },
         h(
           "div",
           null,
-          "Create a new file with only the kept parts (" +
-            fmt(total(S.keep || []), false) +
-            " of " +
-            fmt(S.duration, false) +
-            ")? It's cut without re-encoding and becomes this scene's main file; the original file stays on the scene."
+          (whole
+            ? "Re-encode the whole file (" + fmt(S.duration, false) + ")"
+            : "Create a new file with only the kept parts (" +
+              fmt(total(S.keep || []), false) +
+              " of " +
+              fmt(S.duration, false) +
+              ")") +
+            "? The original file stays on the scene as a second file; " +
+            primaryText() +
+            "."
         ),
-        h(
-          "div",
-          { className: "sceneTrimmer-muted" },
-          "Cuts land on keyframes, so a kept part can start a little before its In unless Snap was on."
+        encodeControls(!whole),
+        !whole && copy
+          ? h(
+              "div",
+              { className: "sceneTrimmer-muted" },
+              "Cuts land on keyframes, so a kept part can start a little before its In unless Snap was on."
+            )
+          : null,
+        btn(
+          whole ? "Re-encode file" : copy ? "Create trimmed file" : "Create re-encoded file",
+          () => startExport("trim", whole),
+          { active: true }
         ),
-        btn("Create trimmed file", () => startExport("trim"), { active: true }),
         btn("Cancel", () => {
           S.confirm = null;
           notify();
@@ -1504,6 +1671,7 @@
             (rec.ranges.length ? ", with the cut parts left out" : "") +
             "? Each gets this scene's title (as “… - Scene N”), studio, date, director, tags and performers, and they're put in a group in order. This scene and its file stay as they are."
         ),
+        encodeControls(true),
         btn("Split into " + count + " scenes", () => startExport("split"), { active: true }),
         btn("Cancel", () => {
           S.confirm = null;
@@ -1619,17 +1787,14 @@
       h(
         "div",
         { className: "sceneTrimmer-row" },
-        btn(
-          "Create trimmed file…",
-          () => {
-            S.confirm = { kind: "export" };
-            notify();
-          },
-          {
-            disabled: !canEdit() || !S.keep || !S.keep.length || total(S.keep) >= S.duration - 0.1,
-            title: "Write a new file with only the kept parts, without re-encoding",
-          }
-        ),
+        btn("Create trimmed file…", () => openExportConfirm("export", false), {
+          disabled: !canEdit() || !S.keep || !S.keep.length || total(S.keep) >= S.duration - 0.1,
+          title: "Write a new file with only the kept parts, optionally re-encoded",
+        }),
+        btn("Re-encode file…", () => openExportConfirm("export", true), {
+          disabled: !canEdit(),
+          title: "Write a re-encoded copy of the whole file (H.264 or H.265, quality and height)",
+        }),
         btn(
           "Split into " + splitSceneCount() + " scenes…",
           () => {
