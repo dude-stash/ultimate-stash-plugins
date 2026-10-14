@@ -10,10 +10,9 @@ copied, so it is quick and lossless.
 
 ## Requirements
 
-- **Python 3** available to Stash.
-- **mutagen**, the library that edits MP4 atoms. The plugin installs it with
-  pip the first time it runs, so Stash needs internet access for that run. If
-  the install fails, the log shows the command to run yourself.
+- **Python 3.10 or newer** available to Stash. The plugin ships with
+  [mutagen](https://github.com/quodlibet/mutagen), the library that edits MP4
+  atoms, so there is nothing to install with pip.
 - Only **`.mp4` and `.m4v`** files are written. Other formats are skipped.
 
 ## Setup

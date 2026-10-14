@@ -7,34 +7,8 @@ import re
 import struct
 import sys
 
-PLUGIN_ID = "StashMetadataMapper"
-
-
-def _ensure_deps():
-    import subprocess
-    needed = []
-    try:
-        from mutagen.mp4 import MP4  # noqa: F401
-    except ImportError:
-        needed.append("mutagen")
-    if not needed:
-        return
-    sys.stderr.write("\x01i\x02Installing missing deps: %s\n" % ", ".join(needed))
-    # Try install strategies in order; stop at the first one that works.
-    for flags in [["--user"], ["--break-system-packages"], ["--user", "--break-system-packages"], []]:
-        try:
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", "--quiet"] + flags + needed,
-                check=True, capture_output=True,
-            )
-            return
-        except subprocess.CalledProcessError:
-            continue
-    sys.stderr.write("\x01e\x02Could not install %s. Run: %s -m pip install %s\n" % (
-        ", ".join(needed), sys.executable, " ".join(needed)))
-    sys.exit(1)
-
-_ensure_deps()
+# mutagen is vendored so the plugin needs no pip install.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor"))
 
 from mutagen.mp4 import MP4, MP4Cover, MP4FreeForm, AtomDataType  # noqa: E402
 

@@ -121,8 +121,8 @@ Write a scene's metadata into its MP4 file, so the file describes itself.
 - Dry-run task that shows what would change, atom by atom.
 - Rescans the files it changed, so Stash keeps track of them after a move.
 
-**Requirement:** Python 3 available to Stash. The `mutagen` library is
-installed with pip on the first run.
+**Requirement:** Python 3.10 or newer available to Stash. The `mutagen`
+library is included, so there's nothing to install with pip.
 
 **Manual:** [How to use Stash Metadata Mapper](docs/stash-metadata-mapper.md)
 
