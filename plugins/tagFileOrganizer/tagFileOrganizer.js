@@ -351,7 +351,13 @@
     var Bootstrap = PluginApi.libraries.Bootstrap;
     var FolderSelect = PluginApi.components.FolderSelect;
     var Toast = PluginApi.hooks.useToast();
-    var defaults = libraryFolders(PluginApi.hooks.useSettings());
+    // useSettings only works inside the Settings pages (it throws on a scene
+    // page), so the library folders come from Stash's configuration query.
+    var useConfiguration = PluginApi.utils.StashService.useConfiguration;
+    var config = useConfiguration ? useConfiguration().data : null;
+    var defaults = libraryFolders({
+      general: config && config.configuration && config.configuration.general,
+    });
     var apollo = PluginApi.libraries.Apollo;
     var mutation = apollo.useMutation(MOVE_FILES);
     var moveFiles = mutation[0];
