@@ -79,6 +79,23 @@ again. **Edit** shows the old text so you can set them up with the tag list.
 Check **Settings → Logs** for what was moved, what matched no rule, and any
 failures.
 
+## Moving files by hand
+
+You can also move a scene's files yourself, without any rules. Open the scene,
+go to the **File Info** tab and click **Move files** under the file details.
+
+1. The window lists the scene's files and starts the folder browser at the
+   folder they are in. Your library folders are the starting points.
+2. Pick the destination folder. Typing `/` or a path lists the folders inside
+   it, and missing folders are created.
+3. Click **Move**. **Cancel** closes the window without moving anything.
+
+**Move** stays greyed out until you pick a folder other than the current one.
+All of the scene's files go to the same folder. The destination must be inside
+one of your library folders, and the same-name rule under *Good to know* applies:
+if the move fails, a message says why and the files stay where they were.
+This works whatever the settings above are, and isn't affected by **Dry run**.
+
 ## Good to know
 
 - A file whose folder is already the destination is left alone.
