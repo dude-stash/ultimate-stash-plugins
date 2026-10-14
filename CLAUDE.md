@@ -51,8 +51,13 @@ scratch files there.
   (`exec: [python, "{pluginDir}/<Name>.py"]`, `interface: raw`) - see
   `plugins/sceneTrimmer/sceneTrimmer.py`. No pip dependencies (not even
   `stashapi`); talk to GraphQL with `urllib` and the `server_connection`
-  cookie. Keep persistent data in Stash's config dir (`server_connection.Dir`),
-  never in the plugin dir, which plugin updates replace.
+  cookie. The one exception is a pure-Python library the script can't do
+  without, such as `mutagen` for MP4 atoms in `plugins/StashMetadataMapper`:
+  copy it unmodified into the plugin's `vendor/` folder with its licence and a
+  `vendor/README.md` naming the version, and put `vendor/` on `sys.path`. Never
+  `pip install` at run time. Keep persistent data in Stash's config dir
+  (`server_connection.Dir`), never in the plugin dir, which plugin updates
+  replace.
 
 ## Conventions in this codebase
 

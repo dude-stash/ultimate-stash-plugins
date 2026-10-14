@@ -1,7 +1,6 @@
-name: StashMetadataMapper
+name: Stash Metadata Mapper
 description: Export scene metadata into MP4 metadata atoms for portable, self-describing media files
-version: 0.2.0
-url: https://github.com/stashapp/CommunityScripts
+version: 0.3.0
 exec:
   - python
   - "{pluginDir}/StashMetadataMapper.py"
@@ -9,6 +8,14 @@ interface: raw
 errLog: warning
 
 settings:
+  runOnSceneUpdate:
+    displayName: Write when a scene is saved
+    description: "Write a scene's metadata into its MP4 file as soon as it is saved."
+    type: BOOLEAN
+  runManually:
+    displayName: Allow the manual task to write files
+    description: "Let the \"Export Metadata\" task write into your files."
+    type: BOOLEAN
   exportTitle:
     displayName: Export Title
     description: Write scene title to the MP4 title atom (©nam)
@@ -81,7 +88,7 @@ tasks:
 
 hooks:
   - name: Auto-export on scene update
-    description: Automatically write metadata to the MP4 file when a scene is saved in Stash
+    description: Writes the scene's metadata to its MP4 file when it is saved, if enabled in the settings.
     triggeredBy:
       - Scene.Update.Post
     defaultArgs:
