@@ -99,7 +99,8 @@ length and how many ranges there are, for example
   **Yes, clear all** to confirm.
 - **Scene N starts at …**: one row per split point, with **Go** and
   **Delete**.
-- **Create trimmed file…** and **Split into N scenes…**: see below.
+- **Create trimmed file…**, **Re-encode file…** and **Split into N scenes…**:
+  see below.
 
 Press the scissors button again to leave Trim mode.
 
@@ -133,7 +134,8 @@ What you end up with:
 
 - A new file next to the original, named `<original name>.trimmed.<ext>`
   (or `.trimmed-2`, `.trimmed-3`, … if that name is taken).
-- It is added to **the same scene** as its main (primary) file, so the title,
+- It is added to **the same scene**, as its main (primary) file unless the
+  [main file setting](#which-file-is-the-main-one) says otherwise, so the title,
   studio, performers, tags, cover, stash IDs and play history all stay. The
   original file stays on the scene as a second file; you can delete it from
   the **File Info** tab, or turn on **Delete the original file after
@@ -144,13 +146,60 @@ What you end up with:
 - Stash then generates sprites, previews, the phash and marker previews for
   the new file, unless **Don't generate previews for trimmed files** is on.
 
-Cuts without re-encoding can only start on a keyframe, so a kept part may
+Cuts without re-encoding (Output: Copy) can only start on a keyframe, so a kept part may
 start a little before its In. With **Snap** on your Ins already sit on
 keyframes, and the file matches exactly what you marked.
 
 While a trim is running, marking is disabled for that scene. If it fails, the
 status line shows "Trim failed: …" with the reason and **Dismiss**; the
 original file and scene are never changed by a failed trim.
+
+## Re-encoding
+
+The trimmed-file and split dialogs have an **Output** choice:
+
+- **Copy** (the default): cut without re-encoding, as described above.
+- **H.264** or **H.265**: re-encode the video with ffmpeg. This makes
+  frame-accurate cuts (no keyframe snapping) and can shrink the file a lot.
+  For H.265 the file is tagged `hvc1`, so Safari and the Chromecast play it.
+
+Choosing H.264 or H.265 shows three more options:
+
+| Option | Does |
+| --- | --- |
+| **CRF** | Quality, 0-51. Lower is better and bigger. About 18-24 is good for H.264 and 22-30 for H.265. |
+| **Height** | Scale down to 1080p, 720p, 480p or 360p. The aspect ratio is kept and a smaller video is never scaled up. **Original** keeps the size. |
+| **Preset** | Encoder speed. Slower presets make smaller files at the same quality. |
+
+**Segments → Re-encode file…** re-encodes the whole scene without cutting
+anything, so you can change the codec, quality or size of a scene you didn't
+trim. Its ranges and markers are left as they are.
+
+A re-encoded file is always an `.mp4`, named
+`<original name>.trimmed-h265-crf28-720p.mp4` (or `.encoded-…` for a whole-file
+re-encode, `.scene-01-…` when splitting). Audio is copied as it is when the mp4
+container allows it and converted to AAC otherwise; subtitles are not kept.
+Encoding takes a while: the status line shows "Encoding: Creating trimmed
+file… 43%", and the work runs as the Stash task "Trim scene", so it carries on
+if you leave the page.
+
+The plugin settings set what the dialog starts with: **Default output**,
+**Default CRF**, **Default maximum height** and **Default encoder preset**.
+
+### Which file is the main one
+
+The new file is added to the same scene next to the original. **Main file
+after a trim or re-encode** in the plugin settings decides which one the scene
+plays afterwards:
+
+- **new** (the default): the new file. Markers are moved to their new times
+  and, after a trim, the ranges are cleared.
+- **original**: the original stays main. Its markers and ranges are left
+  alone.
+- **smaller**: whichever file is smaller.
+
+**Delete the original file after trimming** only deletes the original when the
+new file became the main one.
 
 ## Splitting a movie into scenes
 
@@ -171,7 +220,8 @@ and the status line shows the progress ("Creating the scene files… 43%",
 What you end up with:
 
 - One new file per scene next to the original, named
-  `<original name>.scene-01.<ext>`, `.scene-02`, …, cut without re-encoding.
+  `<original name>.scene-01.<ext>`, `.scene-02`, …, cut without re-encoding
+  (or re-encoded, if you chose H.264 or H.265).
 - One new Stash scene per file, each with:
   - the title "<original title> - Scene N" (or the file name if the original
     has no title),

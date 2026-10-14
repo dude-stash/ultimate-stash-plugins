@@ -1,6 +1,6 @@
 name: Scene Trimmer
-description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Export a trimmed file, or split a movie into its scenes.
-version: 0.3.1
+description: Mark the parts of a scene to keep or cut, right in the video player, and playback skips the cut parts. Export a trimmed file (cut, or re-encoded with H.264/H.265), re-encode a whole scene, or split a movie into its scenes.
+version: 0.4.0
 exec:
   - python
   - "{pluginDir}/sceneTrimmer.py"
@@ -21,11 +21,31 @@ settings:
     type: BOOLEAN
   deleteOriginal:
     displayName: Delete the original file after trimming
-    description: Once the trimmed file is the scene's main file, delete the original (it goes to Stash's trash folder if you have one set). Off by default - the original stays on the scene as a second file. Splitting never deletes the original.
+    description: Once the new file is the scene's main file, delete the original (it goes to Stash's trash folder if you have one set). Off by default - the original stays on the scene as a second file. Splitting never deletes the original, and nothing is deleted when the original stays the main file.
     type: BOOLEAN
+  primaryAfterExport:
+    displayName: Main file after a trim or re-encode
+    description: "Which file the scene plays afterwards: \"new\" (default), \"original\" or \"smaller\" (whichever file is smaller). With \"original\" the scene's markers and ranges are left alone."
+    type: STRING
+  encodeCodec:
+    displayName: Default output
+    description: "What the trim dialog starts with: \"copy\" (cut without re-encoding, default), \"h264\" or \"h265\". You can change it in the dialog each time."
+    type: STRING
+  encodeCrf:
+    displayName: Default CRF
+    description: "Quality for re-encodes: 0-51, lower is better and bigger. Empty means 23 for H.264 and 28 for H.265."
+    type: NUMBER
+  encodeHeight:
+    displayName: Default maximum height
+    description: "Scale re-encodes down to this height: 1080, 720, 480 or 360. 0 or empty keeps the original size. Videos are never scaled up."
+    type: NUMBER
+  encodePreset:
+    displayName: Default encoder preset
+    description: "x264/x265 speed preset: ultrafast, veryfast, faster, fast, medium (default), slow or slower. Slower makes smaller files."
+    type: STRING
 tasks:
   - name: Trim scene
-    description: Started from the player's Segments panel. Cuts the kept parts into a new file (or one file per scene when splitting) without re-encoding.
+    description: Started from the player's Segments panel. Cuts the kept parts into a new file (or one file per scene when splitting), without re-encoding unless you chose H.264 or H.265. Also re-encodes a whole scene.
     defaultArgs:
       mode: trim
   - name: Finalize trim

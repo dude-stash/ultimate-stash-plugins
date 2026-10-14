@@ -350,3 +350,30 @@
 .sceneTrimmer-confirm > div {
   flex-basis: 100%;
 }
+
+.sceneTrimmer-encode {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.sceneTrimmer-field {
+  align-items: center;
+  display: flex;
+  gap: 0.3em;
+  margin: 0;
+}
+
+.sceneTrimmer-input {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 3px;
+  color: inherit;
+  padding: 0.1em 0.3em;
+  width: 5em;
+}
+
+select.sceneTrimmer-input {
+  width: auto;
+}
