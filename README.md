@@ -107,6 +107,25 @@ Move scene files on disk into folders based on their tags.
 
 **Manual:** [How to use Tag File Organizer](docs/tag-file-organizer.md)
 
+### Stash Metadata Mapper (v0.3)
+
+Write a scene's metadata into its MP4 file, so the file describes itself.
+
+**Features:**
+
+- Title, description, date, studio, performers, rating, tags, cover image and
+  Stash IDs go into the file's metadata atoms. Each field has a switch.
+- Choose which tags become genres and which are left out.
+- Write when a scene is saved, with a manual task, or both. You decide in the
+  plugin settings, and nothing is written until you do.
+- Dry-run task that shows what would change, atom by atom.
+- Rescans the files it changed, so Stash keeps track of them after a move.
+
+**Requirement:** Python 3 available to Stash. The `mutagen` library is
+installed with pip on the first run.
+
+**Manual:** [How to use Stash Metadata Mapper](docs/stash-metadata-mapper.md)
+
 ## Support
 
 - **Issues:** [GitHub Issues](https://github.com/dude-stash/ultimate-stash-plugins/issues)

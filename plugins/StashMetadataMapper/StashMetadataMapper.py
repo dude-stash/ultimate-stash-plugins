@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Stash MP4 Metadata Mapper — Phase 2.
-
-Reads scene metadata from Stash via GraphQL and writes it into MP4
-metadata atoms using mutagen. Supports batch export and hook-based
-auto-export on scene update.
-"""
+"""Stash Metadata Mapper: writes scene metadata into MP4 atoms with mutagen, from a manual task or a scene-save hook."""
 
 import json
 import os
@@ -22,13 +17,9 @@ def _ensure_deps():
         from mutagen.mp4 import MP4  # noqa: F401
     except ImportError:
         needed.append("mutagen")
-    try:
-        import requests  # noqa: F401
-    except ImportError:
-        needed.append("requests")
     if not needed:
         return
-    print(f"[{PLUGIN_ID}] Installing missing deps: {needed}", file=sys.stderr, flush=True)
+    sys.stderr.write("\x01i\x02Installing missing deps: %s\n" % ", ".join(needed))
     # Try install strategies in order; stop at the first one that works.
     for flags in [["--user"], ["--break-system-packages"], ["--user", "--break-system-packages"], []]:
         try:
@@ -39,11 +30,8 @@ def _ensure_deps():
             return
         except subprocess.CalledProcessError:
             continue
-    print(
-        f"[{PLUGIN_ID}] ERROR: Could not auto-install deps. "
-        f"Run manually: {sys.executable} -m pip install {' '.join(needed)}",
-        file=sys.stderr, flush=True,
-    )
+    sys.stderr.write("\x01e\x02Could not install %s. Run: %s -m pip install %s\n" % (
+        ", ".join(needed), sys.executable, " ".join(needed)))
     sys.exit(1)
 
 _ensure_deps()
@@ -85,6 +73,8 @@ DEFAULT_SETTINGS = {
     "ignoreTagNames": "",
     "exportStashIds": True,
     "rescanChangedFiles": True,
+    "runOnSceneUpdate": False,
+    "runManually": False,
 }
 
 # Settings that are strings, not booleans
@@ -131,13 +121,17 @@ def rescan_changed(stash, changed, settings):
                 f"track them if moved: {', '.join(paths)}", "ERROR")
 
 
+LEVELS = {"INFO": "i", "WARNING": "w", "ERROR": "e"}
+
+
 def log(msg, level="INFO"):
-    print(f"[{PLUGIN_ID}] [{level}] {msg}", file=sys.stderr, flush=True)
+    # Level chars match pkg/logger/plugin.go: t d i w e p.
+    sys.stderr.write("\x01%s\x02%s\n" % (LEVELS.get(level, "i"), msg))
+    sys.stderr.flush()
 
 
 def eprint(msg):
-    """Write a line directly to stderr (used for dry-run preview blocks)."""
-    print(msg, file=sys.stderr, flush=True)
+    log(msg)
 
 
 def get_settings(stash):
@@ -391,29 +385,29 @@ def handle_export(stash, settings, dry_run):
 
 
 def main():
-    raw = sys.stdin.read()
-    plugin_input = json.loads(raw)
-
-    conn = plugin_input.get("server_connection") or {}
+    plugin_input = json.loads(sys.stdin.read() or "{}")
     args = plugin_input.get("args") or {}
     mode = args.get("mode", "export")
     dry_run = str(args.get("dryRun", "false")).lower() == "true"
 
-    stash = StashInterface(conn)
+    stash = StashInterface(plugin_input.get("server_connection") or {})
     settings = get_settings(stash)
 
-    log(f"Starting — mode={mode} dry_run={dry_run}")
-
     if mode == "hook":
-        result = handle_hook(stash, args, settings, dry_run)
-    elif mode == "export":
-        result = handle_export(stash, settings, dry_run)
-    else:
-        result = f"unknown mode: {mode}"
-        log(result, "ERROR")
-
-    print(json.dumps({"output": result}))
+        if not settings["runOnSceneUpdate"]:
+            return "disabled in settings"
+        return handle_hook(stash, args, settings, dry_run)
+    if mode == "export":
+        if not dry_run and not settings["runManually"]:
+            log("disabled in settings: turn on 'Allow the manual task to write files'", "WARNING")
+            return "disabled in settings"
+        return handle_export(stash, settings, dry_run)
+    raise RuntimeError("unknown mode %r" % mode)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        print(json.dumps({"output": main()}))
+    except Exception as err:
+        log(str(err), "ERROR")
+        print(json.dumps({"error": str(err)}))
