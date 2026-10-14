@@ -1,6 +1,6 @@
 name: Tag File Organizer
-description: Move scene files into folders based on their tags.
-version: 0.2.0
+description: Move scene files into folders based on their tags, or move them yourself from the File Info tab.
+version: 0.3.0
 exec:
   - python
   - "{pluginDir}/tagFileOrganizer.py"

@@ -63,3 +63,9 @@
     display: none;
   }
 }
+
+/* Move files modal. */
+.tfo-move-file {
+  font-family: monospace;
+  font-size: 0.875rem;
+}

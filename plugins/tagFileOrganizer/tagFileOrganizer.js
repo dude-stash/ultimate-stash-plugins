@@ -311,6 +311,150 @@
     );
   }
 
+  // --- move a scene's files by hand ---------------------------------------------
+  //
+  // A button under the scene's File Info tab opens a modal to pick a folder
+  // and move the scene's files there, using Stash's own moveFiles mutation
+  // (the same one the rules use), so the destination must be inside a library
+  // folder.
+
+  var MOVE_FILES = PluginApi.libraries.Apollo.gql`
+    mutation TagFileOrganizerMoveFiles($input: MoveFilesInput!) {
+      moveFiles(input: $input)
+    }
+  `;
+
+  // Only the path is rewritten, with writeFragment rather than evicting the
+  // scene: see the IMPORTANT note in plugins/tagImageGrabber/tagImageGrabber.js
+  // for why evicting an entity that is on screen goes wrong.
+  var FILE_PATH_FRAGMENT = PluginApi.libraries.Apollo.gql`
+    fragment TagFileOrganizerMovedFile on VideoFile {
+      id
+      path
+    }
+  `;
+
+  function parentFolder(path) {
+    return path.replace(/[\\/][^\\/]*$/, "");
+  }
+
+  function baseName(path) {
+    return path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+  }
+
+  function joinPath(folder, name) {
+    var sep = folder.indexOf("\\") !== -1 && folder.indexOf("/") === -1 ? "\\" : "/";
+    return folder.replace(/[\\/]+$/, "") + sep + name;
+  }
+
+  function MoveFilesModal(props) {
+    var Bootstrap = PluginApi.libraries.Bootstrap;
+    var FolderSelect = PluginApi.components.FolderSelect;
+    var Toast = PluginApi.hooks.useToast();
+    var defaults = libraryFolders(PluginApi.hooks.useSettings());
+    var apollo = PluginApi.libraries.Apollo;
+    var mutation = apollo.useMutation(MOVE_FILES);
+    var moveFiles = mutation[0];
+    var moving = mutation[1].loading;
+    var client = apollo.useApolloClient();
+
+    var files = props.files;
+    var current = parentFolder(files[0].path);
+    var state = React.useState(current);
+    var dir = state[0];
+    var setDir = state[1];
+    var canMove = !moving && dir !== "" && dir !== current;
+
+    async function onMove() {
+      try {
+        await moveFiles({
+          variables: {
+            input: {
+              ids: files.map(function (f) {
+                return f.id;
+              }),
+              destination_folder: dir,
+            },
+          },
+        });
+        files.forEach(function (f) {
+          try {
+            client.writeFragment({
+              id: client.cache.identify({ __typename: "VideoFile", id: f.id }),
+              fragment: FILE_PATH_FRAGMENT,
+              data: {
+                __typename: "VideoFile",
+                id: f.id,
+                path: joinPath(dir, baseName(f.path)),
+              },
+            });
+          } catch (err) {
+            // best-effort: the next load shows the new path anyway
+          }
+        });
+        Toast.success("Moved to " + dir);
+        props.onClose();
+      } catch (err) {
+        Toast.error(err);
+      }
+    }
+
+    return h(
+      Bootstrap.Modal,
+      { show: true, onHide: props.onClose, size: "lg" },
+      h(Bootstrap.Modal.Header, { closeButton: true }, h("h5", { className: "mb-0" }, "Move files")),
+      h(
+        Bootstrap.Modal.Body,
+        null,
+        files.map(function (f) {
+          return h("div", { key: f.id, className: "tfo-move-file text-truncate", title: f.path }, f.path);
+        }),
+        h("h6", { className: "mt-3" }, "Move to"),
+        h(FolderSelect, {
+          currentDirectory: dir,
+          onChangeDirectory: setDir,
+          defaultDirectories: defaults,
+          hideError: true,
+        })
+      ),
+      h(
+        Bootstrap.Modal.Footer,
+        null,
+        h(Bootstrap.Button, { variant: "secondary", onClick: props.onClose }, "Cancel"),
+        h(Bootstrap.Button, { variant: "primary", disabled: !canMove, onClick: onMove }, moving ? "Moving..." : "Move")
+      )
+    );
+  }
+
+  function MoveFilesButton(props) {
+    var Bootstrap = PluginApi.libraries.Bootstrap;
+    var state = React.useState(false);
+    var open = state[0];
+    var setOpen = state[1];
+
+    return h(
+      "div",
+      { className: "tfo-move-files mb-3" },
+      h(
+        Bootstrap.Button,
+        {
+          variant: "secondary",
+          onClick: function () {
+            setOpen(true);
+          },
+        },
+        "Move files"
+      ),
+      open &&
+        h(MoveFilesModal, {
+          files: props.files,
+          onClose: function () {
+            setOpen(false);
+          },
+        })
+    );
+  }
+
   // --- patch -----------------------------------------------------------------
 
   PluginApi.patch.instead("StringSetting", function (props, _, originalComponent) {
@@ -319,5 +463,15 @@
     if (props.id === SOURCE_FOLDER_ID) return h(SourceFolderSetting, props);
     if (props.id === RULES_ID && c.TagIDSelect) return h(RulesSetting, props);
     return originalComponent(props);
+  });
+
+  // The panel is patched around, not replaced: the original renders as before
+  // and the button follows it. Without these pieces it is left alone.
+  PluginApi.patch.instead("SceneFileInfoPanel", function (props, _, originalComponent) {
+    var original = originalComponent(props);
+    var c = PluginApi.components;
+    var files = props.scene && props.scene.files;
+    if (!c.FolderSelect || !files || !files.length) return original;
+    return h(React.Fragment, null, original, h(MoveFilesButton, { files: files }));
   });
 })();
