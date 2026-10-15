@@ -30,10 +30,13 @@ is off, so you can turn a criterion back on without retyping it.
 **Text** is one field with a choice of **Title only** or **Title and
 description**.
 
-**Studio** is a name, prefilled from the scene. It is looked up on the
-selected stash-box, including aliases and parent studios, so a network name
-finds its sub-studios' scenes too. If nothing matches, the search stops with
-an error instead of running unfiltered.
+**Studio** is a type-ahead picker, like the studio field when you edit a scene.
+Start typing and pick from the list; parent networks are shown in brackets.
+It is prefilled when the scene's studio is linked on the selected stash-box
+(or has exactly one match by name). Picking a network includes its
+sub-studios' scenes. Picking a studio switches the filter on, and clearing it
+removes the filter. On ThePornDB, which has no studio search, it is a plain
+name field (see below).
 
 **Performers** and **tags** are tick lists. Tick to include; nothing ticked
 means that filter is omitted. The dropdown next to each is **all of these**
@@ -60,7 +63,7 @@ many results to fetch - there is no next-page control.
 
 ThePornDB's stash-box endpoint does not implement the filtered scene query.
 For it (and any box that behaves the same) the plugin runs a text search
-instead, using Text, Studio and the ticked performers' names, and applies the
+instead, using Text, the studio name and the ticked performers' names, and applies the
 other filters to the 100 best matches in the browser. A narrow filter on a
 broad search can therefore come back empty - make the text more specific.
 Title only / Title and description makes no difference there. Pairings search

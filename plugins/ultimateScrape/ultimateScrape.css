@@ -110,3 +110,8 @@
   padding: 0.5rem 0;
   font-size: 0.85rem;
 }
+
+.ultimate-scrape-row-value > .ultimate-scrape-studio-select {
+  flex: 1 1 12rem;
+  min-width: 10rem;
+}

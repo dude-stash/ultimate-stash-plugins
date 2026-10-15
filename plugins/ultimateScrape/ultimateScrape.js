@@ -23,6 +23,7 @@
     PluginApi.libraries.Bootstrap;
   const { NavLink } = PluginApi.libraries.ReactRouterDOM;
   const { faSearch } = PluginApi.libraries.FontAwesomeSolid;
+  const Select = PluginApi.libraries.ReactSelect.default || PluginApi.libraries.ReactSelect;
 
   const ROUTE = "/plugins/ultimate-scrape";
   const SEARCH_FORM_ID = "ultimate-scrape-form";
@@ -116,6 +117,7 @@
         studios {
           id
           name
+          parent { name }
         }
       }
     }
@@ -228,18 +230,79 @@
     return json.data;
   }
 
-  // SceneQueryInput.studios takes ids, and `names` also matches aliases and parent studios so a network name finds its sub-studios
-  async function findStudioIds(box, name) {
-    const data = await gqlRequest(box, QUERY_STUDIOS, {
-      input: {
-        names: name,
-        page: 1,
-        per_page: 10,
-        sort: "NAME",
-        direction: "ASC",
-      },
+  // SceneQueryInput filters by studio id; `name` matches the studio itself while `names` also matches aliases and parent studios, so both are run and merged
+  async function searchStudios(box, term) {
+    const run = (field) =>
+      gqlRequest(box, QUERY_STUDIOS, {
+        input: { [field]: term, page: 1, per_page: 40, sort: "NAME", direction: "ASC" },
+      }).then((data) => data.queryStudios.studios);
+    const [direct, broad] = await Promise.all([run("name"), run("names")]);
+    const seen = new Set();
+    const merged = direct.concat(broad).filter((st) => !seen.has(st.id) && seen.add(st.id));
+    const needle = term.toLowerCase();
+    const rank = (st) => {
+      const n = st.name.toLowerCase();
+      return n === needle ? 0 : n.startsWith(needle) ? 1 : n.includes(needle) ? 2 : 3;
+    };
+    return merged.sort((a, b) => rank(a) - rank(b)).slice(0, 15);
+  }
+
+  // Type-ahead over the box's studios, like core's studio select
+  function StudioPicker(props) {
+    const [options, setOptions] = React.useState([]);
+    const [loading, setLoading] = React.useState(false);
+    const [typed, setTyped] = React.useState("");
+    const timer = React.useRef(undefined);
+    const latest = React.useRef(0);
+
+    React.useEffect(() => () => clearTimeout(timer.current), []);
+
+    function onInputChange(value, meta) {
+      if (meta.action !== "input-change") return;
+      setTyped(value);
+      clearTimeout(timer.current);
+      latest.current += 1;
+      if (!value.trim()) {
+        setOptions([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      const mine = latest.current;
+      timer.current = setTimeout(async function () {
+        try {
+          const found = await searchStudios(props.box, value.trim());
+          if (mine === latest.current) setOptions(found);
+        } catch (err) {
+          console.warn(LOG, "studio search failed", err);
+          if (mine === latest.current) setOptions([]);
+        } finally {
+          if (mine === latest.current) setLoading(false);
+        }
+      }, 250);
+    }
+
+    return React.createElement(Select, {
+      className: "ultimate-scrape-studio-select",
+      classNamePrefix: "react-select",
+      value: props.value
+        ? { value: props.value.id, label: props.value.name }
+        : null,
+      options: options.map((o) => ({
+        value: o.id,
+        label: o.parent ? o.name + " (" + o.parent.name + ")" : o.name,
+        name: o.name,
+      })),
+      isClearable: true,
+      isLoading: loading,
+      filterOption: null,
+      placeholder: "Search studios…",
+      noOptionsMessage: () => (typed.trim() ? "No studios found" : "Type to search studios"),
+      menuPortalTarget: document.body,
+      styles: { menuPortal: (base) => Object.assign({}, base, { zIndex: 2000 }) },
+      onInputChange: onInputChange,
+      onChange: (o) => props.onPick(o ? { id: o.value, name: o.name || o.label } : undefined),
     });
-    return data.queryStudios.studios.map((s) => s.id);
   }
 
   // ThePornDB's queryScenes is a stub (scenes always null) and it has no queryStudios, so such boxes get searchScene plus client-side filtering
@@ -657,12 +720,40 @@
 
     const sceneUrls = (scene && scene.urls) || [];
 
+    React.useEffect(
+      function () {
+        const sceneStudio = scene && scene.studio;
+        setStudioPick(
+          studioStashId ? { id: studioStashId, name: sceneStudio.name } : undefined
+        );
+        if (studioStashId || !box || !sceneStudio || isTextOnlyBox(box)) return;
+        let live = true;
+        searchStudios(box, sceneStudio.name)
+          .then(function (found) {
+            const exact = found.filter(
+              (st) => st.name.toLowerCase() === sceneStudio.name.toLowerCase()
+            );
+            if (live && exact.length === 1) {
+              setStudioPick({ id: exact[0].id, name: exact[0].name });
+            }
+          })
+          .catch(function (err) {
+            console.warn(LOG, "studio lookup failed", err);
+          });
+        return function () {
+          live = false;
+        };
+      },
+      [box && box.endpoint, scene && scene.id, studioStashId]
+    );
+
     const [mode, setMode] = React.useState("scenes");
     const [text, setText] = React.useState((scene && scene.title) || "");
     const [textScope, setTextScope] = React.useState("TITLE");
     const [studioName, setStudioName] = React.useState(
       (scene && scene.studio && scene.studio.name) || ""
     );
+    const [studioPick, setStudioPick] = React.useState(undefined);
     const [showMore, setShowMore] = React.useState(false);
     const [code, setCode] = React.useState("");
     const [codeModifier, setCodeModifier] = React.useState("INCLUDES");
@@ -737,7 +828,7 @@
 
     const moreActive = [useCode, useUrl, useDate].filter(Boolean).length;
 
-    async function buildSceneInput() {
+    function buildSceneInput() {
       // stash-box paginates, but this UI only ever asks for page 1. per_page
       // is a result cap, not a pager.
       const input = {
@@ -765,17 +856,9 @@
       if (selectedTagIds.length) {
         input.tags = { value: selectedTagIds, modifier: tagModifier };
       }
-      if (useStudio && studioName.trim()) {
-        const name = studioName.trim();
-        const sceneStudioName = scene && scene.studio && scene.studio.name;
-        const ids =
-          studioStashId && name === sceneStudioName
-            ? [studioStashId]
-            : await findStudioIds(box, name);
-        if (!ids.length) {
-          throw new Error('No studio matching "' + name + '" on this stash-box');
-        }
-        input.studios = { value: ids, modifier: "INCLUDES" };
+      if (useStudio) {
+        if (!studioPick) throw new Error("Pick a studio from the list, or turn Studio off");
+        input.parentStudio = studioPick.id;
       }
       return input;
     }
@@ -889,7 +972,7 @@
             result = await runTextOnlySearch();
             note = result.note;
           } else {
-            result = await runQueryScenes(box, await buildSceneInput());
+            result = await runQueryScenes(box, buildSceneInput());
             if (!result) {
               result = await runTextOnlySearch();
               note = result.note;
@@ -1218,16 +1301,26 @@
                 enabled: useStudio,
                 onToggle: () => setUseStudio(!useStudio),
                 title:
-                  "Searched by name (aliases and parent studio included) on the selected stash-box",
+                  "Pick a studio or network; its sub-studios' scenes are included",
               },
               [
-                textInput({
-                  key: "studio",
-                  value: studioName,
-                  disabled: !useStudio,
-                  placeholder: "studio or network name",
-                  onChange: (e) => setStudioName(e.target.value),
-                }),
+                isTextOnlyBox(box)
+                  ? textInput({
+                      key: "studio",
+                      value: studioName,
+                      disabled: !useStudio,
+                      placeholder: "studio or network name",
+                      onChange: (e) => setStudioName(e.target.value),
+                    })
+                  : React.createElement(StudioPicker, {
+                      key: "studio",
+                      box: box,
+                      value: studioPick,
+                      onPick: function (pick) {
+                        setStudioPick(pick);
+                        if (pick) setUseStudio(true);
+                      },
+                    }),
               ]
             ),
             React.createElement(
