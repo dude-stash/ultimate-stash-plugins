@@ -614,22 +614,36 @@
   // Removed in v0.4: moving by hand is now the Preview dialog button.
   var DROPPED_KEYS = ["runManually", "2_runManually", "4_runManually"];
 
+  // Goes through Stash's own Apollo client rather than fetch(), so it reaches
+  // the same backend as the rest of the UI. A fetch to "graphql" goes to the
+  // page's own host, which is the wrong server when the UI dev server (port
+  // 3000) is used with a backend on another port. The client doesn't exist
+  // yet when plugin scripts load, so wait for it.
+  function getClient(tries) {
+    var service = PluginApi.utils && PluginApi.utils.StashService;
+    var client = service && service.getClient && service.getClient();
+    if (client) return Promise.resolve(client);
+    if (tries <= 0) return Promise.reject(new Error("Stash's GraphQL client is unavailable"));
+    return new Promise(function (resolve) {
+      setTimeout(resolve, 500);
+    }).then(function () {
+      return getClient(tries - 1);
+    });
+  }
+
   function graphql(query, variables) {
-    var base = document.querySelector("base");
-    var root = new URL((base && base.getAttribute("href")) || "/", window.location.origin);
-    return fetch(new URL("graphql", root.href.endsWith("/") ? root : root.href + "/").href, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: query, variables: variables }),
-    })
-      .then(function (res) {
-        return res.json();
-      })
-      .then(function (res) {
-        if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+    var gql = PluginApi.libraries.Apollo.gql;
+    var isMutation = /^\s*mutation\b/.test(query);
+    return getClient(20).then(function (client) {
+      // no-cache: these results must not reach the cache the settings page
+      // reads from.
+      var request = isMutation
+        ? client.mutate({ mutation: gql(query), variables: variables, fetchPolicy: "no-cache" })
+        : client.query({ query: gql(query), variables: variables, fetchPolicy: "no-cache" });
+      return request.then(function (res) {
         return res.data;
       });
+    });
   }
 
   function migrateSettings() {
