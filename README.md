@@ -97,11 +97,11 @@ Move scene files on disk into folders based on their tags.
 - Rules pick tags from your tag list and a folder from a folder browser.
   Combo rules work: a scene tagged Straight and Threesome can go somewhere
   else than one tagged only Straight. The most specific rule wins.
-- Choose a source folder, such as a torrents inbox, so only new downloads are
+- Choose a source folder, such as your downloads folder, so only new downloads are
   moved and the rest of your library stays put.
-- Move when a scene's tags change, with a manual task, or both. You decide in
-  the plugin settings.
-- Preview and dry-run modes.
+- Move when a scene's tags change, or preview the moves in a list and confirm
+  them. You decide in the plugin settings.
+- A dry-run setting for the tag-change move.
 
 **Requirement:** Python 3 available to Stash (standard library only).
 

@@ -9,8 +9,8 @@
 
   var PLUGIN_ID = "tagFileOrganizer";
   // Matches the id PluginSetting gives each setting (SettingsPluginsPanel).
-  var SOURCE_FOLDER_ID = "plugin-" + PLUGIN_ID + "-sourceFolder";
-  var RULES_ID = "plugin-" + PLUGIN_ID + "-rules";
+  var SOURCE_FOLDER_ID = "plugin-" + PLUGIN_ID + "-1_sourceFolder";
+  var RULES_ID = "plugin-" + PLUGIN_ID + "-2_rules";
 
   var React = PluginApi.React;
   var h = React.createElement;
@@ -56,7 +56,8 @@
 
   // --- rules -----------------------------------------------------------------
   //
-  // Stored as a JSON string: [{"tags": [{"id", "name"}], "folder": "/path"}].
+  // Stored as a JSON string:
+  // [{"tags": [{"id", "name"}], "folder": "/path", "anywhere": true}].
   // A string rather than an array so Stash's own text setting can still show
   // it if this script isn't running. The backend matches on tag ids; names are
   // only kept for the summary, and are refreshed whenever the rules are saved.
@@ -97,7 +98,8 @@
           { key: i },
           h("strong", null, tagNames(rule) || "?"),
           " → ",
-          h("code", null, rule.folder || "?")
+          h("code", null, rule.folder || "?"),
+          rule.anywhere && h("span", { className: "text-muted" }, " (from any folder)")
         );
       })
     );
@@ -129,6 +131,7 @@
                 return { id: t.id, name: t.name };
               }),
               folder: rule.folder,
+              anywhere: rule.anywhere,
             });
           },
         })
@@ -140,10 +143,26 @@
           ? h("code", { title: rule.folder }, rule.folder)
           : h("span", { className: "text-muted" }, "No folder")
       ),
+      h(Bootstrap.Form.Check, {
+        type: "checkbox",
+        className: "tfo-rule-anywhere",
+        id: "tfo-anywhere-" + props.index,
+        label: "Any folder",
+        title: "Ignore the source folder and move files from anywhere in the library",
+        checked: !!rule.anywhere,
+        onChange: function (e) {
+          props.onChange({ tags: rule.tags, folder: rule.folder, anywhere: e.target.checked });
+        },
+      }),
       h(
         Bootstrap.Button,
-        { variant: "secondary", size: "sm", onClick: props.onBrowse },
-        "Browse"
+        {
+          variant: "secondary",
+          size: "sm",
+          title: "Choose folder",
+          onClick: props.onBrowse,
+        },
+        h(Icon, { icon: icons.faFolderOpen })
       ),
       h(
         Bootstrap.Button,
@@ -226,7 +245,7 @@
           setBrowsing(null);
         },
         onPick: function (dir) {
-          update(browsing, { tags: rules[browsing].tags, folder: dir });
+          update(browsing, { tags: rules[browsing].tags, folder: dir, anywhere: rules[browsing].anywhere });
           setBrowsing(null);
         },
       });
@@ -247,11 +266,13 @@
           "div",
           { className: "tfo-rule tfo-rule-header text-muted" },
           h("div", { className: "tfo-rule-tags" }, "Tags"),
-          h("div", { className: "tfo-rule-folder" }, "Folder")
+          h("div", { className: "tfo-rule-folder" }, "Folder"),
+          h("div", { className: "tfo-rule-anywhere" }, "Source")
         ),
       rules.map(function (rule, i) {
         return h(RuleRow, {
           key: i,
+          index: i,
           rule: rule,
           onChange: function (next) {
             update(i, next);
@@ -272,13 +293,124 @@
           variant: "secondary",
           className: "tfo-add",
           onClick: function () {
-            save(rules.concat([{ tags: [], folder: "" }]));
+            save(rules.concat([{ tags: [], folder: "", anywhere: false }]));
           },
         },
         h(Icon, { icon: icons.faPlus }),
         " Add rule"
       ),
       props.error && h("div", { className: "text-danger mt-2" }, props.error)
+    );
+  }
+
+  // Runs the backend's preview and shows the moves here, so they don't have to
+  // be dug out of Settings > Logs. It uses the saved rules and settings.
+  function PreviewButton() {
+    var Bootstrap = PluginApi.libraries.Bootstrap;
+    var state = React.useState({ open: false, loading: false, result: null, error: null, moved: null });
+    var st = state[0];
+    var setSt = state[1];
+
+    function run() {
+      setSt({ open: true, loading: true, result: null, error: null, moved: null });
+      graphql(
+        "mutation($id: ID!, $args: Map) { runPluginOperation(plugin_id: $id, args: $args) }",
+        { id: PLUGIN_ID, args: { mode: "preview", detailed: true } }
+      ).then(
+        function (data) {
+          setSt({ open: true, loading: false, result: data.runPluginOperation, error: null, moved: null });
+        },
+        function (err) {
+          setSt({ open: true, loading: false, result: null, error: err.message, moved: null });
+        }
+      );
+    }
+    // Only offered after a preview was shown, and moves regardless of the Dry
+    // run setting, since the user just confirmed the list.
+    function move() {
+      setSt({ open: true, loading: true, result: null, error: null, moved: null });
+      graphql(
+        "mutation($id: ID!, $args: Map) { runPluginOperation(plugin_id: $id, args: $args) }",
+        { id: PLUGIN_ID, args: { mode: "organize", live: true } }
+      ).then(
+        function (data) {
+          setSt({ open: true, loading: false, result: null, error: null, moved: String(data.runPluginOperation) });
+        },
+        function (err) {
+          setSt({ open: true, loading: false, result: null, error: err.message, moved: null });
+        }
+      );
+    }
+    function close() {
+      setSt({ open: false, loading: false, result: null, error: null, moved: null });
+    }
+    var moveCount = st.result && st.result.moves ? st.result.moves.length : 0;
+
+    return h(
+      React.Fragment,
+      null,
+      h(
+        Bootstrap.Button,
+        { variant: "secondary", size: "sm", className: "tfo-preview-btn", onClick: run },
+        "Preview moves"
+      ),
+      h(
+        Bootstrap.Modal,
+        { show: st.open, onHide: close, size: "xl", dialogClassName: "tfo-preview-dialog" },
+        h(Bootstrap.Modal.Header, { closeButton: true }, h(Bootstrap.Modal.Title, null, "Preview moves")),
+        h(Bootstrap.Modal.Body, null, previewBody(st)),
+        h(
+          Bootstrap.Modal.Footer,
+          null,
+          moveCount > 0 &&
+            !st.loading &&
+            h(
+              Bootstrap.Button,
+              { variant: "primary", onClick: move },
+              "Move " + moveCount + (moveCount === 1 ? " file" : " files")
+            ),
+          h(Bootstrap.Button, { variant: "secondary", onClick: close }, "Close")
+        )
+      )
+    );
+  }
+
+  function previewBody(st) {
+    if (st.loading) return h("p", null, "Working on your scenes...");
+    if (st.error) return h("div", { className: "text-danger" }, st.error);
+    if (st.moved) {
+      return h("p", null, st.moved + ". Failures, such as a file that already exists in the folder, are listed in Settings > Logs.");
+    }
+    var r = st.result;
+    if (typeof r === "string") return h("p", null, r);
+    if (!r) return null;
+    var moves = r.moves || [];
+    return h(
+      "div",
+      null,
+      h(
+        "p",
+        null,
+        h("strong", null, moves.length + " to move"),
+        ", " + (r.unchanged || 0) + " already in place, " + (r.unmatched || []).length +
+          " matching no rule. Nothing has been moved yet."
+      ),
+      moves.length
+        ? h(
+            "ul",
+            { className: "tfo-preview-list list-unstyled" },
+            moves.map(function (m, i) {
+              return h(
+                "li",
+                { key: i },
+                h("div", { className: "tfo-preview-scene" }, m.scene),
+                h("code", { className: "text-muted" }, m.from),
+                " → ",
+                h("code", null, m.to)
+              );
+            })
+          )
+        : null
     );
   }
 
@@ -301,7 +433,7 @@
           return h(RulesEditor, { value: value, setValue: setValue, error: error });
         },
         renderValue: function (value) {
-          return h(RulesSummary, { value: value });
+          return h("div", null, h(RulesSummary, { value: value }), h(PreviewButton));
         },
         validateChange: validateRules,
         // ModalSetting spreads this object onto SettingModal, whose own
@@ -460,6 +592,80 @@
         })
     );
   }
+
+  // --- settings migration ----------------------------------------------------
+  //
+  // Stash lists a plugin's settings sorted by key, so v0.4 prefixed the keys
+  // with their position. Settings saved under the old keys are copied over
+  // once, here rather than in the backend script, which only runs on a hook or
+  // task and so wouldn't fix the settings page before then.
+
+  // Every name the settings have had, including the numbered ones from the
+  // an unreleased draft, mapped to the current one.
+  var OLD_KEYS = {
+    runOnTagChange: "3_runOnTagChange",
+    "1_runOnTagChange": "3_runOnTagChange",
+    sourceFolder: "1_sourceFolder",
+    "3_sourceFolder": "1_sourceFolder",
+    rules: "2_rules",
+    "4_rules": "2_rules",
+    dryRun: "5_dryRun",
+  };
+  // Removed in v0.4: moving by hand is now the Preview dialog button.
+  var DROPPED_KEYS = ["runManually", "2_runManually", "4_runManually"];
+
+  function graphql(query, variables) {
+    var base = document.querySelector("base");
+    var root = new URL((base && base.getAttribute("href")) || "/", window.location.origin);
+    return fetch(new URL("graphql", root.href.endsWith("/") ? root : root.href + "/").href, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query, variables: variables }),
+    })
+      .then(function (res) {
+        return res.json();
+      })
+      .then(function (res) {
+        if (res.errors && res.errors.length) throw new Error(res.errors[0].message);
+        return res.data;
+      });
+  }
+
+  function migrateSettings() {
+    return graphql("query($id: ID!) { configuration { plugins(include: [$id]) } }", {
+      id: PLUGIN_ID,
+    }).then(function (data) {
+      var saved = (data.configuration.plugins || {})[PLUGIN_ID] || {};
+      var old = Object.keys(OLD_KEYS)
+        .concat(DROPPED_KEYS)
+        .filter(function (k) {
+          return k in saved;
+        });
+      if (!old.length) return;
+      // configurePlugin replaces the whole map, so this also drops the old
+      // keys. A key already saved under its new name wins.
+      var next = Object.assign({}, saved);
+      old.forEach(function (k) {
+        delete next[k];
+        if (OLD_KEYS[k] && !(OLD_KEYS[k] in saved)) next[OLD_KEYS[k]] = saved[k];
+      });
+      return graphql(
+        "mutation($id: ID!, $input: Map!) { configurePlugin(plugin_id: $id, input: $input) }",
+        { id: PLUGIN_ID, input: next }
+      ).then(function () {
+        console.info("[TagFileOrganizer] moved settings to their new names");
+        // The settings page already loaded the old values into its cache.
+        if (/\/settings/.test(window.location.pathname + window.location.hash)) {
+          window.location.reload();
+        }
+      });
+    });
+  }
+
+  migrateSettings().catch(function (err) {
+    console.warn("[TagFileOrganizer] settings migration failed", err);
+  });
 
   // --- patch -----------------------------------------------------------------
 
