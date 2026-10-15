@@ -50,10 +50,12 @@ name field (see below).
 above it. Type a name, pick a performer from the box you selected, and they
 are added to the list already ticked - useful when the performer is not on
 the scene yet. It also works on the standalone page, where there is no scene.
-**Tags** are a tick list of the scene's tags. Nothing ticked means that filter
-is omitted. The dropdown next to each is **all of these** or **any of
-these**. Entries with no id on this stash-box are listed underneath, greyed
-out. Performers you added stay in the list until you change the source box.
+**Tags** work the same way: the scene's tags are ticked off in a list, and a
+search box adds any tag from the selected stash-box. Nothing ticked means that
+filter is omitted. The dropdown next to each list is **all of these** (the
+scene must have every one) or **any of these** (at least one). Entries with no
+id on this stash-box are listed underneath, greyed out. Performers and tags
+you added stay in their list until you change the source box.
 
 **More options** (collapsed by default, with a count of how many are on)
 holds the rarer filters, each with its own switch:

@@ -260,6 +260,39 @@
       .sort((a, b) => rank(a) - rank(b));
   }
 
+  const QUERY_TAGS_BY_NAME = `
+    query PluginQueryTags($input: TagQueryInput!) {
+      queryTags(input: $input) {
+        tags {
+          id
+          name
+        }
+      }
+    }
+  `;
+
+  // ThePornDB's `names` returns unrelated tags, so it only gets `name`; other boxes also match aliases
+  async function searchTags(box, term) {
+    const run = (field) =>
+      gqlRequest(box, QUERY_TAGS_BY_NAME, {
+        input: { [field]: term, page: 1, per_page: 30, sort: "NAME", direction: "ASC" },
+      }).then((data) => data.queryTags.tags);
+    const lists = await Promise.all(
+      isTextOnlyBox(box) ? [run("name")] : [run("name"), run("names")]
+    );
+    const seen = new Set();
+    const merged = [].concat(...lists).filter((t) => !seen.has(t.id) && seen.add(t.id));
+    const needle = term.toLowerCase();
+    const rank = (t) => {
+      const n = t.name.toLowerCase();
+      return n === needle ? 0 : n.startsWith(needle) ? 1 : n.includes(needle) ? 2 : 3;
+    };
+    return merged
+      .sort((a, b) => rank(a) - rank(b))
+      .slice(0, 15)
+      .map((t) => ({ id: t.id, name: t.name, label: t.name }));
+  }
+
   // SceneQueryInput filters by studio id; `name` matches the studio itself while `names` also matches aliases and parent studios, so both are run and merged
   async function searchStudios(box, term) {
     const run = (field) =>
@@ -819,6 +852,14 @@
     );
     const [performerModifier, setPerformerModifier] = React.useState("INCLUDES_ALL");
     const [includedTags, setIncludedTags] = React.useState([]);
+    const [extraTags, setExtraTags] = React.useState([]);
+    const allTagOptions = React.useMemo(
+      () =>
+        tagOptions.concat(
+          extraTags.filter((x) => !tagOptions.some((t) => t.stashId === x.stashId))
+        ),
+      [tagOptions, extraTags]
+    );
     const [tagModifier, setTagModifier] = React.useState("INCLUDES_ALL");
 
     const [anchorOverride, setAnchorOverride] = React.useState("");
@@ -863,7 +904,7 @@
     const selectedPerformerIds = allPerformerOptions
       .map((p) => p.stashId)
       .filter((id) => id && includedPerformers.includes(id));
-    const selectedTagIds = tagOptions
+    const selectedTagIds = allTagOptions
       .map((t) => t.stashId)
       .filter((id) => id && includedTags.includes(id));
 
@@ -1394,35 +1435,48 @@
                   : null,
               ]
             ),
-            scene
-              ? fieldRow(
-                  {
-                    id: "ultimate-scrape-tags",
-                    label: "Tags",
-                    tall: true,
+            fieldRow(
+              {
+                id: "ultimate-scrape-tags",
+                label: "Tags",
+                tall: true,
+              },
+              [
+                React.createElement(EntityPicker, {
+                  key: "tagpick",
+                  box: box,
+                  search: searchTags,
+                  placeholder: "Search tags to add…",
+                  value: undefined,
+                  onPick: function (pick) {
+                    if (!pick) return;
+                    setExtraTags(extraTags.concat({ name: pick.name, stashId: pick.id }));
+                    if (!includedTags.includes(pick.id)) {
+                      setIncludedTags(includedTags.concat(pick.id));
+                    }
                   },
-                  tagOptions.length
-                    ? [
-                        React.createElement(IdCheckList, {
-                          key: "tags",
-                          idPrefix: "ultimate-scrape-tag",
-                          options: tagOptions,
-                          isChecked: (id) => includedTags.includes(id),
-                          onToggle: (id) =>
-                            setIncludedTags(toggleIn(includedTags, id)),
-                        }),
-                        selectInput(
-                          {
-                            key: "tagmod",
-                            value: tagModifier,
-                            onChange: (e) => setTagModifier(e.target.value),
-                          },
-                          modifierOptions(ID_MODIFIERS, ID_MODIFIER_LABELS)
-                        ),
-                      ]
-                    : [muted("No tags are set on this scene.")]
-                )
-              : null,
+                }),
+                allTagOptions.length
+                  ? React.createElement(IdCheckList, {
+                      key: "tags",
+                      idPrefix: "ultimate-scrape-tag",
+                      options: allTagOptions,
+                      isChecked: (id) => includedTags.includes(id),
+                      onToggle: (id) => setIncludedTags(toggleIn(includedTags, id)),
+                    })
+                  : null,
+                allTagOptions.length
+                  ? selectInput(
+                      {
+                        key: "tagmod",
+                        value: tagModifier,
+                        onChange: (e) => setTagModifier(e.target.value),
+                      },
+                      modifierOptions(ID_MODIFIERS, ID_MODIFIER_LABELS)
+                    )
+                  : null,
+              ]
+            ),
             fieldRow(
               {
                 id: "ultimate-scrape-use-studio",
@@ -1736,6 +1790,7 @@
                   setIncludedPerformers([]);
                   setExtraPerformers([]);
                   setIncludedTags([]);
+                  setExtraTags([]);
                   setUseStudio(false);
                   setAnchorOverride("");
                 },
