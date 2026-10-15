@@ -737,13 +737,6 @@
       () => (box ? toIdOptions(scene && scene.performers, box.endpoint) : []),
       [scene, box]
     );
-    const allPerformerOptions = React.useMemo(
-      () =>
-        performerOptions.concat(
-          extraPerformers.filter((x) => !performerOptions.some((p) => p.stashId === x.stashId))
-        ),
-      [performerOptions, extraPerformers]
-    );
     const tagOptions = React.useMemo(
       () => (box ? toIdOptions(scene && scene.tags, box.endpoint) : []),
       [scene, box]
@@ -757,6 +750,8 @@
     );
 
     const sceneUrls = (scene && scene.urls) || [];
+
+    const [studioPick, setStudioPick] = React.useState(undefined);
 
     React.useEffect(
       function () {
@@ -791,7 +786,6 @@
     const [studioName, setStudioName] = React.useState(
       (scene && scene.studio && scene.studio.name) || ""
     );
-    const [studioPick, setStudioPick] = React.useState(undefined);
     const [showMore, setShowMore] = React.useState(false);
     const [code, setCode] = React.useState("");
     const [codeModifier, setCodeModifier] = React.useState("INCLUDES");
@@ -815,6 +809,13 @@
     // ticked means that criterion is omitted.
     const [includedPerformers, setIncludedPerformers] = React.useState([]);
     const [extraPerformers, setExtraPerformers] = React.useState([]);
+    const allPerformerOptions = React.useMemo(
+      () =>
+        performerOptions.concat(
+          extraPerformers.filter((x) => !performerOptions.some((p) => p.stashId === x.stashId))
+        ),
+      [performerOptions, extraPerformers]
+    );
     const [performerModifier, setPerformerModifier] = React.useState("INCLUDES_ALL");
     const [includedTags, setIncludedTags] = React.useState([]);
     const [tagModifier, setTagModifier] = React.useState("INCLUDES_ALL");
