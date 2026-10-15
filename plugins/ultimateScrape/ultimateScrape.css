@@ -94,3 +94,19 @@
   flex: 0 0 5rem;
   min-width: 5rem;
 }
+
+.ultimate-scrape-more {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.ultimate-scrape-more-toggle {
+  padding-left: 0;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.ultimate-scrape-note {
+  padding: 0.5rem 0;
+  font-size: 0.85rem;
+}

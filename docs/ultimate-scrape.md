@@ -13,33 +13,58 @@ Providers** - there is nothing to configure.
 - A **magnifying-glass button in the scene page's tab strip**, opening the same
   search in a modal - seeded from that scene.
 
-Opened from a scene, the form is prefilled with the scene's title, a
-dropdown of its URLs, and its performers, tags and studio. Switched filters
-(title, studio code, URL, date, studio) start **off** - flip the switch to
-include them. Performers and tags have no switch: tick the ones you want.
+Opened from a scene, the form is prefilled with the scene's title, its studio
+name, a dropdown of its URLs, and its performers and tags. Switched filters
+(text, studio, and the ones under **More options**) start **off** - flip the
+switch to include them. Performers and tags have no switch: tick the ones you
+want.
 
 The modal's Search button sits in the footer. Close the dialog with the X
 in the header.
 
 ## Scenes search
 
-Title, studio code, URL, date and studio each have an on/off switch. Values
-are kept while the switch is off, so you can turn a criterion back on
-without retyping it.
+Text and studio each have an on/off switch. Values are kept while the switch
+is off, so you can turn a criterion back on without retyping it.
 
-**Studio code** is the studio's catalog number for the scene (stash-box's
-`code` field), not the stash-box scene id. The modifier next to it is
-equals / not equals / includes / excludes.
+**Text** is one field with a choice of **Title only** or **Title and
+description**.
 
-**URL** is a dropdown of the scene's URLs, plus **Custom…** if you need to
-type one.
+**Studio** is a name, prefilled from the scene. It is looked up on the
+selected stash-box, including aliases and parent studios, so a network name
+finds its sub-studios' scenes too. If nothing matches, the search stops with
+an error instead of running unfiltered.
 
 **Performers** and **tags** are tick lists. Tick to include; nothing ticked
-means that filter is omitted. Entries with no id on this stash-box are
-listed underneath, greyed out. Date is equals / after / before.
+means that filter is omitted. The dropdown next to each is **all of these**
+or **any of these**. Entries with no id on this stash-box are listed
+underneath, greyed out.
+
+**More options** (collapsed by default, with a count of how many are on)
+holds the rarer filters, each with its own switch:
+
+- **Studio code** is the studio's catalog number for the scene (stash-box's
+  `code` field), not the stash-box scene id. The modifier next to it is
+  equals / not equals / includes / excludes.
+- **URL** is a dropdown of the scene's URLs, plus **Custom…** if you need to
+  type one.
+- **Date** is equals / after / before.
+
+Different filters are combined with AND, so each one you switch on narrows
+the results.
 
 **Sort** (field, direction) and **Limit** sit at the bottom. Limit is how
 many results to fetch - there is no next-page control.
+
+### ThePornDB
+
+ThePornDB's stash-box endpoint does not implement the filtered scene query.
+For it (and any box that behaves the same) the plugin runs a text search
+instead, using Text, Studio and the ticked performers' names, and applies the
+other filters to the 100 best matches in the browser. A narrow filter on a
+broad search can therefore come back empty - make the text more specific.
+Title only / Title and description makes no difference there. Pairings search
+is untested on it.
 
 ## Pairings search
 

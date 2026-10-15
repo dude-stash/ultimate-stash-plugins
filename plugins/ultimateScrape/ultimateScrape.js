@@ -31,7 +31,15 @@
 
   // Criterion modifiers, per stash-box's CriterionModifier enum.
   const STRING_MODIFIERS = ["EQUALS", "NOT_EQUALS", "INCLUDES", "EXCLUDES"];
-  const ID_MODIFIERS = ["INCLUDES_ALL", "INCLUDES", "EXCLUDES", "EQUALS"];
+  const ID_MODIFIERS = ["INCLUDES_ALL", "INCLUDES"];
+  const ID_MODIFIER_LABELS = {
+    INCLUDES_ALL: "all of these",
+    INCLUDES: "any of these",
+  };
+  const TEXT_SCOPES = [
+    { value: "TITLE", label: "Title only" },
+    { value: "TEXT", label: "Title and description" },
+  ];
   const SCENE_SORTS = [
     "TITLE",
     "DATE",
@@ -78,6 +86,36 @@
           studio { name }
           performers { performer { name } }
           urls { url }
+        }
+      }
+    }
+  `;
+
+  // searchScene is the one scene search every stash-box implements: fuzzy over title, studio and performer names, capped at 100
+  const SEARCH_SCENES = `
+    query PluginSearchScenes($term: String!, $limit: Int) {
+      searchScene(term: $term, limit: $limit) {
+        id
+        title
+        details
+        release_date
+        code
+        duration
+        studio { id name }
+        performers { performer { id name } }
+        tags { id }
+        urls { url }
+      }
+    }
+  `;
+  const SEARCH_SCENE_LIMIT = 100;
+
+  const QUERY_STUDIOS = `
+    query PluginQueryStudios($input: StudioQueryInput!) {
+      queryStudios(input: $input) {
+        studios {
+          id
+          name
         }
       }
     }
@@ -190,9 +228,113 @@
     return json.data;
   }
 
+  // SceneQueryInput.studios takes ids, and `names` also matches aliases and parent studios so a network name finds its sub-studios
+  async function findStudioIds(box, name) {
+    const data = await gqlRequest(box, QUERY_STUDIOS, {
+      input: {
+        names: name,
+        page: 1,
+        per_page: 10,
+        sort: "NAME",
+        direction: "ASC",
+      },
+    });
+    return data.queryStudios.studios.map((s) => s.id);
+  }
+
+  // ThePornDB's queryScenes is a stub (scenes always null) and it has no queryStudios, so such boxes get searchScene plus client-side filtering
+  const TEXT_ONLY_HOST = /(^|\.)theporndb\.net$/;
+  const textOnlyEndpoints = new Set();
+
+  function isTextOnlyBox(box) {
+    if (!box) return false;
+    if (textOnlyEndpoints.has(box.endpoint)) return true;
+    try {
+      return TEXT_ONLY_HOST.test(new URL(box.endpoint).hostname);
+    } catch (err) {
+      return false;
+    }
+  }
+
   async function runQueryScenes(box, input) {
     const data = await gqlRequest(box, QUERY_SCENES, { input: input });
+    if (data.queryScenes && data.queryScenes.scenes == null) {
+      textOnlyEndpoints.add(box.endpoint);
+      return undefined;
+    }
     return data.queryScenes;
+  }
+
+  async function runSearchScene(box, term) {
+    const data = await gqlRequest(box, SEARCH_SCENES, {
+      term: term,
+      limit: SEARCH_SCENE_LIMIT,
+    });
+    return data.searchScene || [];
+  }
+
+  function matchString(actual, criterion) {
+    const a = (actual || "").toLowerCase();
+    const v = criterion.value.toLowerCase();
+    switch (criterion.modifier) {
+      case "EQUALS":
+        return a === v;
+      case "NOT_EQUALS":
+        return a !== v;
+      case "EXCLUDES":
+        return !a.includes(v);
+      default:
+        return a.includes(v);
+    }
+  }
+
+  function matchDate(actual, criterion) {
+    const a = actual || "";
+    if (!a) return false;
+    switch (criterion.modifier) {
+      case "GREATER_THAN":
+        return a > criterion.value;
+      case "LESS_THAN":
+        return a < criterion.value;
+      default:
+        return a.startsWith(criterion.value);
+    }
+  }
+
+  function matchIds(actualIds, wanted, modifier) {
+    return modifier === "INCLUDES"
+      ? wanted.some((id) => actualIds.includes(id))
+      : wanted.every((id) => actualIds.includes(id));
+  }
+
+  function filterSearchScenes(scenes, f) {
+    return scenes.filter(function (sc) {
+      if (f.code && !matchString(sc.code, f.code)) return false;
+      if (f.date && !matchDate(sc.release_date, f.date)) return false;
+      if (f.url) {
+        const needle = f.url.toLowerCase();
+        const urls = (sc.urls || []).map((u) => (u.url || "").toLowerCase());
+        if (!urls.some((u) => u.includes(needle))) return false;
+      }
+      if (f.studio) {
+        const st = sc.studio;
+        if (!st) return false;
+        const sameId = f.studio.id && st.id === f.studio.id;
+        const sameName = (st.name || "")
+          .toLowerCase()
+          .includes(f.studio.name.toLowerCase());
+        if (!sameId && !sameName) return false;
+      }
+      if (f.performers) {
+        const ids = (sc.performers || []).map((p) => p.performer.id);
+        if (!matchIds(ids, f.performers.ids, f.performers.modifier)) return false;
+      }
+      if (f.tags) {
+        const ids = (sc.tags || []).map((t) => t.id);
+        if (!matchIds(ids, f.tags.ids, f.tags.modifier)) return false;
+      }
+      return true;
+    });
   }
 
   // Pairings is a performer query; stash-box has no scene filter for
@@ -282,9 +424,10 @@
       .join(" ");
   }
 
-  function modifierOptions(modifiers) {
+  function modifierOptions(modifiers, labels) {
     return modifiers.map(function (m) {
-      return { value: m, label: MODIFIER_LABELS[m] || prettyEnum(m) };
+      const label = (labels && labels[m]) || MODIFIER_LABELS[m] || prettyEnum(m);
+      return { value: m, label: label };
     });
   }
 
@@ -515,8 +658,12 @@
     const sceneUrls = (scene && scene.urls) || [];
 
     const [mode, setMode] = React.useState("scenes");
-    const [text, setText] = React.useState("");
-    const [title, setTitle] = React.useState((scene && scene.title) || "");
+    const [text, setText] = React.useState((scene && scene.title) || "");
+    const [textScope, setTextScope] = React.useState("TITLE");
+    const [studioName, setStudioName] = React.useState(
+      (scene && scene.studio && scene.studio.name) || ""
+    );
+    const [showMore, setShowMore] = React.useState(false);
     const [code, setCode] = React.useState("");
     const [codeModifier, setCodeModifier] = React.useState("INCLUDES");
     const [url, setUrl] = React.useState(sceneUrls[0] || "");
@@ -529,7 +676,6 @@
     // Switched filters start off even when prefilled. Flip the switch to send
     // them. Performers and tags have no switch: tick the ones to include.
     const [useText, setUseText] = React.useState(false);
-    const [useTitle, setUseTitle] = React.useState(false);
     const [useCode, setUseCode] = React.useState(false);
     const [useUrl, setUseUrl] = React.useState(false);
     const [useDate, setUseDate] = React.useState(false);
@@ -589,7 +735,9 @@
       .map((t) => t.stashId)
       .filter((id) => id && includedTags.includes(id));
 
-    function buildSceneInput() {
+    const moreActive = [useCode, useUrl, useDate].filter(Boolean).length;
+
+    async function buildSceneInput() {
       // stash-box paginates, but this UI only ever asks for page 1. per_page
       // is a result cap, not a pager.
       const input = {
@@ -598,8 +746,9 @@
         sort: sort,
         direction: direction,
       };
-      if (useText && text.trim()) input.text = text.trim();
-      if (useTitle && title.trim()) input.title = title.trim();
+      if (useText && text.trim()) {
+        input[textScope === "TEXT" ? "text" : "title"] = text.trim();
+      }
       if (useCode && code.trim()) {
         input.code = { value: code.trim(), modifier: codeModifier };
       }
@@ -616,10 +765,77 @@
       if (selectedTagIds.length) {
         input.tags = { value: selectedTagIds, modifier: tagModifier };
       }
-      if (useStudio && studioStashId) {
-        input.studios = { value: [studioStashId], modifier: "INCLUDES" };
+      if (useStudio && studioName.trim()) {
+        const name = studioName.trim();
+        const sceneStudioName = scene && scene.studio && scene.studio.name;
+        const ids =
+          studioStashId && name === sceneStudioName
+            ? [studioStashId]
+            : await findStudioIds(box, name);
+        if (!ids.length) {
+          throw new Error('No studio matching "' + name + '" on this stash-box');
+        }
+        input.studios = { value: ids, modifier: "INCLUDES" };
       }
       return input;
+    }
+
+    async function runTextOnlySearch() {
+      const parts = [];
+      if (useText && text.trim()) parts.push(text.trim());
+      if (useStudio && studioName.trim()) parts.push(studioName.trim());
+      performerOptions
+        .filter((p) => p.stashId && selectedPerformerIds.includes(p.stashId))
+        .forEach((p) => parts.push(p.name));
+      if (!parts.length) {
+        throw new Error(
+          "This stash-box can only search by text. Turn on Text or Studio, or tick a performer."
+        );
+      }
+
+      const filters = {};
+      if (useCode && code.trim()) {
+        filters.code = { value: code.trim(), modifier: codeModifier };
+      }
+      if (useDate && date.trim()) {
+        filters.date = { value: date.trim(), modifier: dateModifier };
+      }
+      if (useUrl && url.trim()) filters.url = url.trim();
+      if (useStudio && studioName.trim()) {
+        const name = studioName.trim();
+        const sameAsScene =
+          scene && scene.studio && scene.studio.name === name && studioStashId;
+        filters.studio = { id: sameAsScene ? studioStashId : undefined, name: name };
+      }
+      if (selectedPerformerIds.length) {
+        filters.performers = {
+          ids: selectedPerformerIds,
+          modifier: performerModifier,
+        };
+      }
+      if (selectedTagIds.length) {
+        filters.tags = { ids: selectedTagIds, modifier: tagModifier };
+      }
+
+      const found = await runSearchScene(box, parts.join(" "));
+      const matched = filterSearchScenes(found, filters);
+      const ordered =
+        PAIRING_SCENE_SORTS.indexOf(sort) >= 0
+          ? sortScenes(matched, sort, direction)
+          : matched;
+      const capped = found.length >= SEARCH_SCENE_LIMIT;
+      return {
+        count: matched.length,
+        scenes: ordered.slice(0, perPage),
+        note:
+          matched.length +
+          (capped ? "+" : "") +
+          " matches on " +
+          boxDisplayName(box, boxes.indexOf(box)) +
+          " (text search" +
+          (Object.keys(filters).length ? ", other filters applied to its top " + found.length : "") +
+          ")",
+      };
     }
 
     function buildPairingInput() {
@@ -667,13 +883,25 @@
                   (anchorName || "this performer")
           );
         } else {
-          const result = await runQueryScenes(box, buildSceneInput());
+          let result;
+          let note;
+          if (isTextOnlyBox(box)) {
+            result = await runTextOnlySearch();
+            note = result.note;
+          } else {
+            result = await runQueryScenes(box, await buildSceneInput());
+            if (!result) {
+              result = await runTextOnlySearch();
+              note = result.note;
+            } else {
+              note =
+                result.count +
+                " total matches on " +
+                boxDisplayName(box, boxes.indexOf(box));
+            }
+          }
           setSceneResult(result);
-          setResultNote(
-            result.count +
-              " total matches on " +
-              boxDisplayName(box, boxes.indexOf(box))
-          );
+          setResultNote(note);
         }
       } catch (err) {
         setError(err.message || String(err));
@@ -888,141 +1116,38 @@
             ),
           ]
         : [
+            isTextOnlyBox(box)
+              ? React.createElement(
+                  "div",
+                  { key: "text-only-note", className: "text-muted ultimate-scrape-note" },
+                  "This stash-box only supports a text search (title, studio and performer names). Text, Studio and ticked performers are searched; the other filters are applied to the 100 best matches."
+                )
+              : null,
             fieldRow(
               {
                 id: "ultimate-scrape-use-text",
-                label: "Free text",
+                label: "Text",
                 enabled: useText,
                 onToggle: () => setUseText(!useText),
                 title:
-                  "stash-box text filter: matches title and description (details)",
+                  "Title only maps to SceneQueryInput.title. Title and description maps to SceneQueryInput.text",
               },
               [
                 textInput({
                   key: "text",
                   value: text,
                   disabled: !useText,
-                  placeholder: "title and description",
-                  title:
-                    "Like SceneQueryInput.text - searches title and description, not title alone",
+                  placeholder: "e.g. a performer name or scene title",
                   onChange: (e) => setText(e.target.value),
                 }),
-              ]
-            ),
-            fieldRow(
-              {
-                id: "ultimate-scrape-use-title",
-                label: "Title contains",
-                enabled: useTitle,
-                onToggle: () => setUseTitle(!useTitle),
-              },
-              [
-                textInput({
-                  key: "title",
-                  value: title,
-                  disabled: !useTitle,
-                  placeholder: "e.g. a performer name or scene title",
-                  onChange: (e) => setTitle(e.target.value),
-                }),
-              ]
-            ),
-            fieldRow(
-              {
-                id: "ultimate-scrape-use-code",
-                label: "Studio code",
-                enabled: useCode,
-                onToggle: () => setUseCode(!useCode),
-              },
-              [
-                textInput({
-                  key: "code",
-                  value: code,
-                  disabled: !useCode,
-                  placeholder: "studio catalog number",
-                  onChange: (e) => setCode(e.target.value),
-                }),
                 selectInput(
                   {
-                    key: "codemod",
-                    value: codeModifier,
-                    disabled: !useCode,
-                    onChange: (e) => setCodeModifier(e.target.value),
+                    key: "textscope",
+                    value: textScope,
+                    disabled: !useText,
+                    onChange: (e) => setTextScope(e.target.value),
                   },
-                  modifierOptions(STRING_MODIFIERS)
-                ),
-              ]
-            ),
-            fieldRow(
-              {
-                id: "ultimate-scrape-use-url",
-                label: "URL",
-                enabled: useUrl,
-                onToggle: () => setUseUrl(!useUrl),
-              },
-              [
-                sceneUrls.length
-                  ? selectInput(
-                      {
-                        key: "urlpick",
-                        className: "ultimate-scrape-wide",
-                        value: urlSelectValue(),
-                        disabled: !useUrl,
-                        onChange: function (e) {
-                          const v = e.target.value;
-                          if (v === URL_CUSTOM) {
-                            setUrlCustom(true);
-                            if (sceneUrls.includes(url)) setUrl("");
-                          } else {
-                            setUrlCustom(false);
-                            setUrl(v);
-                          }
-                        },
-                      },
-                      [{ value: "", label: "(none)" }]
-                        .concat(
-                          sceneUrls.map((u) => ({ value: u, label: u }))
-                        )
-                        .concat([{ value: URL_CUSTOM, label: "Custom…" }])
-                    )
-                  : null,
-                showUrlCustom()
-                  ? textInput({
-                      key: "url",
-                      className: "ultimate-scrape-wide",
-                      value: sceneUrls.includes(url) ? "" : url,
-                      disabled: !useUrl,
-                      placeholder: "https://…",
-                      onChange: function (e) {
-                        setUrlCustom(true);
-                        setUrl(e.target.value);
-                      },
-                    })
-                  : null,
-              ]
-            ),
-            fieldRow(
-              {
-                id: "ultimate-scrape-use-date",
-                label: "Date",
-                enabled: useDate,
-                onToggle: () => setUseDate(!useDate),
-              },
-              [
-                textInput({
-                  key: "date",
-                  value: date,
-                  disabled: !useDate,
-                  placeholder: "YYYY-MM-DD",
-                  onChange: (e) => setDate(e.target.value),
-                }),
-                selectInput(
-                  {
-                    key: "datemod",
-                    value: dateModifier,
-                    disabled: !useDate,
-                    onChange: (e) => setDateModifier(e.target.value),
-                  },
-                  modifierOptions(["EQUALS", "GREATER_THAN", "LESS_THAN"])
+                  TEXT_SCOPES
                 ),
               ]
             ),
@@ -1051,7 +1176,7 @@
                             value: performerModifier,
                             onChange: (e) => setPerformerModifier(e.target.value),
                           },
-                          modifierOptions(ID_MODIFIERS)
+                          modifierOptions(ID_MODIFIERS, ID_MODIFIER_LABELS)
                         ),
                       ]
                     : [muted("No performers are tagged on this scene.")]
@@ -1080,33 +1205,151 @@
                             value: tagModifier,
                             onChange: (e) => setTagModifier(e.target.value),
                           },
-                          modifierOptions(ID_MODIFIERS)
+                          modifierOptions(ID_MODIFIERS, ID_MODIFIER_LABELS)
                         ),
                       ]
                     : [muted("No tags are set on this scene.")]
                 )
               : null,
-            scene && scene.studio
-              ? fieldRow(
+            fieldRow(
+              {
+                id: "ultimate-scrape-use-studio",
+                label: "Studio",
+                enabled: useStudio,
+                onToggle: () => setUseStudio(!useStudio),
+                title:
+                  "Searched by name (aliases and parent studio included) on the selected stash-box",
+              },
+              [
+                textInput({
+                  key: "studio",
+                  value: studioName,
+                  disabled: !useStudio,
+                  placeholder: "studio or network name",
+                  onChange: (e) => setStudioName(e.target.value),
+                }),
+              ]
+            ),
+            React.createElement(
+              "div",
+              { key: "more-toggle", className: "ultimate-scrape-more" },
+              React.createElement(
+                Button,
+                {
+                  variant: "link",
+                  size: "sm",
+                  className: "ultimate-scrape-more-toggle",
+                  onClick: () => setShowMore(!showMore),
+                },
+                (showMore ? "Fewer" : "More") +
+                  " options" +
+                  (!showMore && moreActive ? " (" + moreActive + " on)" : "")
+              )
+            ),
+            ...(showMore
+              ? [
+                fieldRow(
                   {
-                    id: "ultimate-scrape-use-studio",
-                    label: "Studio",
-                    enabled: useStudio,
-                    unavailable: !studioStashId,
-                    title: studioStashId
-                      ? undefined
-                      : scene.studio.name + " has no id on this stash-box",
-                    onToggle: () => setUseStudio(!useStudio),
+                    id: "ultimate-scrape-use-code",
+                    label: "Studio code",
+                    enabled: useCode,
+                    onToggle: () => setUseCode(!useCode),
                   },
                   [
-                    muted(
-                      studioStashId
-                        ? scene.studio.name
-                        : scene.studio.name + " has no id on this stash-box"
+                    textInput({
+                      key: "code",
+                      value: code,
+                      disabled: !useCode,
+                      placeholder: "studio catalog number",
+                      onChange: (e) => setCode(e.target.value),
+                    }),
+                    selectInput(
+                      {
+                        key: "codemod",
+                        value: codeModifier,
+                        disabled: !useCode,
+                        onChange: (e) => setCodeModifier(e.target.value),
+                      },
+                      modifierOptions(STRING_MODIFIERS)
                     ),
                   ]
-                )
-              : null,
+                ),
+                fieldRow(
+                  {
+                    id: "ultimate-scrape-use-url",
+                    label: "URL",
+                    enabled: useUrl,
+                    onToggle: () => setUseUrl(!useUrl),
+                  },
+                  [
+                    sceneUrls.length
+                      ? selectInput(
+                          {
+                            key: "urlpick",
+                            className: "ultimate-scrape-wide",
+                            value: urlSelectValue(),
+                            disabled: !useUrl,
+                            onChange: function (e) {
+                              const v = e.target.value;
+                              if (v === URL_CUSTOM) {
+                                setUrlCustom(true);
+                                if (sceneUrls.includes(url)) setUrl("");
+                              } else {
+                                setUrlCustom(false);
+                                setUrl(v);
+                              }
+                            },
+                          },
+                          [{ value: "", label: "(none)" }]
+                            .concat(
+                              sceneUrls.map((u) => ({ value: u, label: u }))
+                            )
+                            .concat([{ value: URL_CUSTOM, label: "Custom…" }])
+                        )
+                      : null,
+                    showUrlCustom()
+                      ? textInput({
+                          key: "url",
+                          className: "ultimate-scrape-wide",
+                          value: sceneUrls.includes(url) ? "" : url,
+                          disabled: !useUrl,
+                          placeholder: "https://…",
+                          onChange: function (e) {
+                            setUrlCustom(true);
+                            setUrl(e.target.value);
+                          },
+                        })
+                      : null,
+                  ]
+                ),
+                fieldRow(
+                  {
+                    id: "ultimate-scrape-use-date",
+                    label: "Date",
+                    enabled: useDate,
+                    onToggle: () => setUseDate(!useDate),
+                  },
+                  [
+                    textInput({
+                      key: "date",
+                      value: date,
+                      disabled: !useDate,
+                      placeholder: "YYYY-MM-DD",
+                      onChange: (e) => setDate(e.target.value),
+                    }),
+                    selectInput(
+                      {
+                        key: "datemod",
+                        value: dateModifier,
+                        disabled: !useDate,
+                        onChange: (e) => setDateModifier(e.target.value),
+                      },
+                      modifierOptions(["EQUALS", "GREATER_THAN", "LESS_THAN"])
+                    ),
+                  ]
+                ),
+                ]
+              : []),
             fieldRow(
               { id: "ultimate-scrape-sort", label: "Sort" },
               [
