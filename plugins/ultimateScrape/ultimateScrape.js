@@ -230,6 +230,36 @@
     return json.data;
   }
 
+  const QUERY_PERFORMERS_BY_NAME = `
+    query PluginQueryPerformers($input: PerformerQueryInput!) {
+      queryPerformers(input: $input) {
+        performers {
+          id
+          name
+          disambiguation
+        }
+      }
+    }
+  `;
+
+  async function searchPerformers(box, term) {
+    const data = await gqlRequest(box, QUERY_PERFORMERS_BY_NAME, {
+      input: { names: term, page: 1, per_page: 15, sort: "SCENE_COUNT", direction: "DESC" },
+    });
+    const needle = term.toLowerCase();
+    const rank = (pf) => {
+      const n = pf.name.toLowerCase();
+      return n === needle ? 0 : n.startsWith(needle) ? 1 : 2;
+    };
+    return data.queryPerformers.performers
+      .map((pf) => ({
+        id: pf.id,
+        name: pf.name,
+        label: pf.disambiguation ? pf.name + " (" + pf.disambiguation + ")" : pf.name,
+      }))
+      .sort((a, b) => rank(a) - rank(b));
+  }
+
   // SceneQueryInput filters by studio id; `name` matches the studio itself while `names` also matches aliases and parent studios, so both are run and merged
   async function searchStudios(box, term) {
     const run = (field) =>
@@ -244,11 +274,18 @@
       const n = st.name.toLowerCase();
       return n === needle ? 0 : n.startsWith(needle) ? 1 : n.includes(needle) ? 2 : 3;
     };
-    return merged.sort((a, b) => rank(a) - rank(b)).slice(0, 15);
+    return merged
+      .sort((a, b) => rank(a) - rank(b))
+      .slice(0, 15)
+      .map((st) => ({
+        id: st.id,
+        name: st.name,
+        label: st.parent ? st.name + " (" + st.parent.name + ")" : st.name,
+      }));
   }
 
-  // Type-ahead over the box's studios, like core's studio select
-  function StudioPicker(props) {
+  // Type-ahead over a box's entities, like core's studio and performer selects. props.search(box, term) returns [{id, name, label}]
+  function EntityPicker(props) {
     const [options, setOptions] = React.useState([]);
     const [loading, setLoading] = React.useState(false);
     const [typed, setTyped] = React.useState("");
@@ -271,10 +308,10 @@
       const mine = latest.current;
       timer.current = setTimeout(async function () {
         try {
-          const found = await searchStudios(props.box, value.trim());
+          const found = await props.search(props.box, value.trim());
           if (mine === latest.current) setOptions(found);
         } catch (err) {
-          console.warn(LOG, "studio search failed", err);
+          console.warn(LOG, "search failed", err);
           if (mine === latest.current) setOptions([]);
         } finally {
           if (mine === latest.current) setLoading(false);
@@ -283,21 +320,15 @@
     }
 
     return React.createElement(Select, {
-      className: "ultimate-scrape-studio-select",
+      className: "ultimate-scrape-picker",
       classNamePrefix: "react-select",
-      value: props.value
-        ? { value: props.value.id, label: props.value.name }
-        : null,
-      options: options.map((o) => ({
-        value: o.id,
-        label: o.parent ? o.name + " (" + o.parent.name + ")" : o.name,
-        name: o.name,
-      })),
-      isClearable: true,
+      value: props.value ? { value: props.value.id, label: props.value.name } : null,
+      options: options.map((o) => ({ value: o.id, label: o.label, name: o.name })),
+      isClearable: !!props.value,
       isLoading: loading,
       filterOption: null,
-      placeholder: "Search studios…",
-      noOptionsMessage: () => (typed.trim() ? "No studios found" : "Type to search studios"),
+      placeholder: props.placeholder,
+      noOptionsMessage: () => (typed.trim() ? "Nothing found" : "Type to search"),
       menuPortalTarget: document.body,
       styles: { menuPortal: (base) => Object.assign({}, base, { zIndex: 2000 }) },
       onInputChange: onInputChange,
@@ -706,6 +737,13 @@
       () => (box ? toIdOptions(scene && scene.performers, box.endpoint) : []),
       [scene, box]
     );
+    const allPerformerOptions = React.useMemo(
+      () =>
+        performerOptions.concat(
+          extraPerformers.filter((x) => !performerOptions.some((p) => p.stashId === x.stashId))
+        ),
+      [performerOptions, extraPerformers]
+    );
     const tagOptions = React.useMemo(
       () => (box ? toIdOptions(scene && scene.tags, box.endpoint) : []),
       [scene, box]
@@ -776,6 +814,7 @@
     // Performers and tags are opt-in. Tick to add them to the query; none
     // ticked means that criterion is omitted.
     const [includedPerformers, setIncludedPerformers] = React.useState([]);
+    const [extraPerformers, setExtraPerformers] = React.useState([]);
     const [performerModifier, setPerformerModifier] = React.useState("INCLUDES_ALL");
     const [includedTags, setIncludedTags] = React.useState([]);
     const [tagModifier, setTagModifier] = React.useState("INCLUDES_ALL");
@@ -819,7 +858,7 @@
       performerOptions.find((p) => p.stashId === anchorId) || {}
     ).name;
 
-    const selectedPerformerIds = performerOptions
+    const selectedPerformerIds = allPerformerOptions
       .map((p) => p.stashId)
       .filter((id) => id && includedPerformers.includes(id));
     const selectedTagIds = tagOptions
@@ -867,7 +906,7 @@
       const parts = [];
       if (useText && text.trim()) parts.push(text.trim());
       if (useStudio && studioName.trim()) parts.push(studioName.trim());
-      performerOptions
+      allPerformerOptions
         .filter((p) => p.stashId && selectedPerformerIds.includes(p.stashId))
         .forEach((p) => parts.push(p.name));
       if (!parts.length) {
@@ -1234,37 +1273,53 @@
                 ),
               ]
             ),
-            scene
-              ? fieldRow(
-                  {
-                    id: "ultimate-scrape-performers",
-                    label: "Performers",
-                    tall: true,
+            fieldRow(
+              {
+                id: "ultimate-scrape-performers",
+                label: "Performers",
+                tall: true,
+              },
+              [
+                React.createElement(EntityPicker, {
+                  key: "perfpick",
+                  box: box,
+                  search: searchPerformers,
+                  placeholder: "Search performers to add…",
+                  value: undefined,
+                  onPick: function (pick) {
+                    if (!pick) return;
+                    setExtraPerformers(
+                      extraPerformers.concat({ name: pick.name, stashId: pick.id })
+                    );
+                    if (!includedPerformers.includes(pick.id)) {
+                      setIncludedPerformers(includedPerformers.concat(pick.id));
+                    }
                   },
-                  performerOptions.length
-                    ? [
-                        React.createElement(IdCheckList, {
-                          key: "perfs",
-                          idPrefix: "ultimate-scrape-perf",
-                          options: performerOptions,
-                          isChecked: (id) => includedPerformers.includes(id),
-                          onToggle: (id) =>
-                            setIncludedPerformers(
-                              toggleIn(includedPerformers, id)
-                            ),
-                        }),
-                        selectInput(
-                          {
-                            key: "perfmod",
-                            value: performerModifier,
-                            onChange: (e) => setPerformerModifier(e.target.value),
-                          },
-                          modifierOptions(ID_MODIFIERS, ID_MODIFIER_LABELS)
-                        ),
-                      ]
-                    : [muted("No performers are tagged on this scene.")]
-                )
-              : null,
+                }),
+                allPerformerOptions.length
+                  ? React.createElement(IdCheckList, {
+                      key: "perfs",
+                      idPrefix: "ultimate-scrape-perf",
+                      options: allPerformerOptions,
+                      isChecked: (id) => includedPerformers.includes(id),
+                      onToggle: (id) =>
+                        setIncludedPerformers(toggleIn(includedPerformers, id)),
+                    })
+                  : scene
+                  ? muted("No performers are tagged on this scene.")
+                  : null,
+                allPerformerOptions.length
+                  ? selectInput(
+                      {
+                        key: "perfmod",
+                        value: performerModifier,
+                        onChange: (e) => setPerformerModifier(e.target.value),
+                      },
+                      modifierOptions(ID_MODIFIERS, ID_MODIFIER_LABELS)
+                    )
+                  : null,
+              ]
+            ),
             scene
               ? fieldRow(
                   {
@@ -1312,9 +1367,11 @@
                       placeholder: "studio or network name",
                       onChange: (e) => setStudioName(e.target.value),
                     })
-                  : React.createElement(StudioPicker, {
+                  : React.createElement(EntityPicker, {
                       key: "studio",
                       box: box,
+                      search: searchStudios,
+                      placeholder: "Search studios…",
                       value: studioPick,
                       onPick: function (pick) {
                         setStudioPick(pick);
@@ -1596,6 +1653,7 @@
                   setResultNote("");
                   setError(undefined);
                   setIncludedPerformers([]);
+                  setExtraPerformers([]);
                   setIncludedTags([]);
                   setUseStudio(false);
                   setAnchorOverride("");
