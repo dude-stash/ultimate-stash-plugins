@@ -1,6 +1,6 @@
 name: Tag File Organizer
 description: Move scene files into folders based on their tags, or move them yourself from the File Info tab.
-version: 0.3.0
+version: 0.4.0
 exec:
   - python
   - "{pluginDir}/tagFileOrganizer.py"
@@ -19,32 +19,19 @@ hooks:
     defaultArgs:
       mode: hook
 settings:
-  runOnTagChange:
+  3_runOnTagChange:
     displayName: Move when a scene's tags change
     description: "Move a scene as soon as it is saved with new tags."
     type: BOOLEAN
-  runManually:
-    displayName: Allow the manual tasks to move files
-    description: "Let the \"Organize all scenes\" task move files."
-    type: BOOLEAN
-  sourceFolder:
+  1_sourceFolder:
     displayName: Source folder
-    description: "Only move files inside this folder, e.g. your torrents folder. Empty means everywhere."
+    description: "Only move files from this folder, e.g. your downloads folder. Empty means everywhere."
     type: STRING
-  rules:
+  2_rules:
     displayName: Rules
     description: "Pick tags and a folder for each rule. The rule with the most matching tags wins."
     type: STRING
-  dryRun:
+  5_dryRun:
     displayName: Dry run
-    description: "Only log the moves, don't make them."
+    description: "Only log the moves instead of making them when a scene is saved."
     type: BOOLEAN
-tasks:
-  - name: Organize all scenes
-    description: Move every scene in the source folder according to your rules.
-    defaultArgs:
-      mode: organize
-  - name: Preview moves
-    description: Log what "Organize all scenes" would move, without moving anything.
-    defaultArgs:
-      mode: preview

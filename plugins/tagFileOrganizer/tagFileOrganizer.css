@@ -20,12 +20,17 @@
   white-space: nowrap;
 }
 
+.tfo-rule-anywhere {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 .tfo-rule-header {
   font-size: 0.875rem;
   margin-bottom: 0.25rem;
   /* line the headings up with the columns of the rows below, which also hold
-     the Browse and delete buttons */
-  padding-right: 7.5rem;
+     the folder and delete buttons */
+  padding-right: 5.5rem;
 }
 
 .tfo-add {
@@ -68,4 +73,30 @@
 .tfo-move-file {
   font-family: monospace;
   font-size: 0.875rem;
+}
+
+/* Preview moves, on the settings page. */
+.tfo-preview-btn {
+  margin-top: 0.5rem;
+}
+
+.tfo-preview-list li {
+  border-bottom: 1px solid var(--bs-border-color, rgba(128, 128, 128, 0.3));
+  overflow-wrap: anywhere;
+  padding: 0.375rem 0;
+}
+
+.tfo-preview-scene {
+  font-weight: bold;
+}
+
+/* Other plugins patch every tag select and add their own controls to it; the
+   tagCopyPaste plugin floats Copy/Paste buttons over the select, which covers
+   it here. react-select draws its own controls as divs, so any real button or
+   button group in this cell belongs to another plugin. Hidden, they can still
+   be triggered from code, so that plugin's keyboard copy and paste keeps
+   working. */
+.tfo-rule-tags button,
+.tfo-rule-tags .btn-group {
+  display: none;
 }

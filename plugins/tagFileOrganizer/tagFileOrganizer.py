@@ -9,8 +9,8 @@ Stdlib only on purpose, so there is nothing for users to pip install.
 
 Operations (args.mode):
   hook      (hook) a scene was created or updated: organize that scene
-  organize  (task) organize every scene in the source folder
-  preview   (task) log what organize would do, and move nothing
+  organize  (settings page) organize every scene in the source folder
+  preview   (settings page) list what organize would do, and move nothing
 """
 
 import json
@@ -84,9 +84,10 @@ def plugin_settings(stash):
 # --- rules -------------------------------------------------------------------
 
 def parse_rules(value):
-    """Parse the rules setting into [(frozenset(keys), folder)].
+    """Parse the rules setting into [(frozenset(keys), folder, anywhere)].
 
-    The settings page saves a JSON list, [{"tags": [{"id", "name"}], "folder"}],
+    The settings page saves a JSON list,
+    [{"tags": [{"id", "name"}], "folder", "anywhere"}],
     and rules match on tag ids, so renaming a tag doesn't break them. v0.1
     saved "Tag A, Tag B => /folder" lines instead; those still work, matched
     by name, until the rules are saved again. Keys are "id:<id>" or
@@ -109,7 +110,7 @@ def parse_rules(value):
             # rather than stop the others from working.
             log("w", "rule %d ignored: it needs at least one tag and a folder" % n)
             continue
-        rules.append((keys, folder))
+        rules.append((keys, folder, bool(rule.get("anywhere"))))
     return rules
 
 
@@ -125,7 +126,7 @@ def parse_text_rules(text):
         if not sep or not keys or not folder:
             log("w", "rules line %d ignored, expected 'Tag, Tag => /folder': %s" % (n, line))
             continue
-        rules.append((keys, folder))
+        rules.append((keys, folder, False))
     return rules
 
 
@@ -138,7 +139,7 @@ def scene_keys(tags):
 
 
 def pick_folder(rules, keys):
-    """The destination for a scene with these tag keys, or None to leave it.
+    """The winning rule for a scene with these tag keys, or None to leave it.
 
     Of the rules whose tags are all on the scene, the one naming the most tags
     wins, so "Straight + Threesome" beats "Straight". max() keeps the first of
@@ -147,7 +148,7 @@ def pick_folder(rules, keys):
     matching = [r for r in rules if r[0] <= keys]
     if not matching:
         return None
-    return max(matching, key=lambda r: len(r[0]))[1]
+    return max(matching, key=lambda r: len(r[0]))
 
 
 def norm(path):
@@ -155,8 +156,8 @@ def norm(path):
 
 
 def is_inside(path, folder):
-    # Compare with a trailing separator so /data/torrents2 isn't "inside"
-    # /data/torrents.
+    # Compare with a trailing separator so /data/downloads2 isn't "inside"
+    # /data/downloads.
     return norm(path).startswith(norm(folder).rstrip(os.sep) + os.sep)
 
 
@@ -165,24 +166,35 @@ def is_inside(path, folder):
 SCENE_FIELDS = "id title tags { id name } files { id path }"
 
 
-def organize_scene(stash, scene, settings, rules, dry_run):
-    """Returns "moved", "skipped" or "error" for the scene."""
-    source = (settings.get("sourceFolder") or "").strip()
-    dest = pick_folder(rules, scene_keys(scene.get("tags") or []))
+def organize_scene(stash, scene, settings, rules, dry_run, report=None):
+    """Returns "moved", "skipped" or "error" for the scene.
+
+    When report is a dict, a dry run adds what it found to it: "moves" as
+    {scene, from, to} and "unmatched" as paths no rule applies to.
+    """
+    source = (settings.get("1_sourceFolder") or "").strip()
+    rule = pick_folder(rules, scene_keys(scene.get("tags") or []))
+    dest = rule[1] if rule else None
+    # A rule marked "anywhere" ignores the source folder.
+    anywhere = bool(rule and rule[2])
     label = scene.get("title") or "scene %s" % scene["id"]
 
     result = "skipped"
     for f in scene.get("files") or []:
         path = f["path"]
-        if source and not is_inside(path, source):
+        if source and not anywhere and not is_inside(path, source):
             continue
         if not dest:
             log("i", "%s: no rule matches, left in place: %s" % (label, path))
+            if report is not None:
+                report["unmatched"].append(path)
             continue
         if norm(os.path.dirname(path)) == norm(dest):
             continue
         if dry_run:
             log("i", "[dry run] would move %s -> %s" % (path, dest))
+            if report is not None:
+                report["moves"].append({"scene": label, "from": path, "to": dest})
             result = "moved"
             continue
         try:
@@ -199,7 +211,7 @@ def organize_scene(stash, scene, settings, rules, dry_run):
 
 
 def op_hook(stash, args, settings, rules):
-    if not settings.get("runOnTagChange"):
+    if not settings.get("3_runOnTagChange"):
         return "disabled in settings"
     ctx = args.get("hookContext") or {}
     # An edit that didn't touch tags (play count, rating...) can't change the
@@ -216,18 +228,21 @@ def op_hook(stash, args, settings, rules):
         {"id": str(scene_id)})["findScene"]
     if not scene:
         return "scene not found"
-    return organize_scene(stash, scene, settings, rules, bool(settings.get("dryRun")))
+    return organize_scene(stash, scene, settings, rules, bool(settings.get("5_dryRun")))
 
 
-def op_organize(stash, settings, rules, dry_run):
-    source = (settings.get("sourceFolder") or "").strip()
+def op_organize(stash, settings, rules, dry_run, detailed=False):
+    source = (settings.get("1_sourceFolder") or "").strip()
     scene_filter = {}
-    if source:
+    # An "anywhere" rule can move files outside the source folder, so the query
+    # can't be narrowed then.
+    if source and not any(r[2] for r in rules):
         # Narrows the query; is_inside() still decides per file. The quotes
         # matter: unquoted, Stash splits the path on spaces and matches any
         # one word (getPathSearchClauseMany in pkg/sqlite).
         scene_filter = {"path": {"value": '"%s"' % source, "modifier": "INCLUDES"}}
     counts = {"moved": 0, "skipped": 0, "error": 0}
+    report = {"moves": [], "unmatched": []} if detailed else None
     page = 1
     while True:
         data = stash.call(
@@ -236,13 +251,18 @@ def op_organize(stash, settings, rules, dry_run):
             {"f": {"page": page, "per_page": PAGE_SIZE, "sort": "id", "direction": "ASC"},
              "sf": scene_filter})["findScenes"]
         for scene in data["scenes"]:
-            counts[organize_scene(stash, scene, settings, rules, dry_run)] += 1
+            counts[organize_scene(stash, scene, settings, rules, dry_run, report)] += 1
         if page * PAGE_SIZE >= data["count"] or not data["scenes"]:
             break
         page += 1
     summary = "%s%d moved, %d unchanged, %d failed" % (
         "[dry run] " if dry_run else "", counts["moved"], counts["skipped"], counts["error"])
     log("i", summary)
+    if detailed:
+        # The settings page shows this; the task only needs the summary.
+        report["summary"] = summary
+        report["unchanged"] = counts["skipped"]
+        return report
     return summary
 
 
@@ -255,7 +275,7 @@ def main():
     mode = args.get("mode")
 
     settings = plugin_settings(stash)
-    rules = parse_rules(settings.get("rules"))
+    rules = parse_rules(settings.get("2_rules"))
     if not rules:
         log("i", "no rules configured")
         return "no rules configured"
@@ -263,12 +283,12 @@ def main():
     if mode == "hook":
         return op_hook(stash, args, settings, rules)
     if mode == "preview":
-        return op_organize(stash, settings, rules, True)
+        return op_organize(stash, settings, rules, True, bool(args.get("detailed")))
     if mode == "organize":
-        if not settings.get("runManually"):
-            log("w", "disabled in settings: turn on 'Allow the manual tasks to move files'")
-            return "disabled in settings"
-        return op_organize(stash, settings, rules, bool(settings.get("dryRun")))
+        # The settings page asks for live=true after the user confirmed a
+        # preview, so the Dry run setting doesn't apply to that.
+        dry_run = False if args.get("live") else bool(settings.get("5_dryRun"))
+        return op_organize(stash, settings, rules, dry_run)
     raise RuntimeError("unknown mode %r" % mode)
 
 
