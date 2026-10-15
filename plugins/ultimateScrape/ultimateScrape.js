@@ -1381,8 +1381,6 @@
                       onToggle: (id) =>
                         setIncludedPerformers(toggleIn(includedPerformers, id)),
                     })
-                  : scene
-                  ? muted("No performers are tagged on this scene.")
                   : null,
                 allPerformerOptions.length
                   ? selectInput(
