@@ -19,7 +19,7 @@
 
   const React = PluginApi.React;
   const GQL = PluginApi.GQL;
-  const { Button, Form, Table, Alert, Spinner, Nav, Modal } =
+  const { Button, Form, Table, Alert, Spinner, Nav, Modal, Badge } =
     PluginApi.libraries.Bootstrap;
   const { NavLink } = PluginApi.libraries.ReactRouterDOM;
   const { faSearch } = PluginApi.libraries.FontAwesomeSolid;
@@ -610,7 +610,7 @@
   }
 
   function muted(text) {
-    return React.createElement("div", { className: "text-muted" }, text);
+    return React.createElement("div", { key: text, className: "text-muted" }, text);
   }
 
   // Checkbox list for an ID-based criterion. Entries with no id on this
@@ -803,6 +803,7 @@
     const [useUrl, setUseUrl] = React.useState(false);
     const [useDate, setUseDate] = React.useState(false);
     const [useStudio, setUseStudio] = React.useState(false);
+    const [useFileMatch, setUseFileMatch] = React.useState(true);
     const [urlCustom, setUrlCustom] = React.useState(false);
 
     // Performers and tags are opt-in. Tick to add them to the query; none
@@ -976,6 +977,30 @@
       return input;
     }
 
+    // Core's own "Scrape with" lookup: the backend sends the scene's phash, oshash and md5 to the box. Shaped like a queryScenes row
+    async function runFileMatch() {
+      const res = await scrapeScene({
+        variables: {
+          source: { stash_box_endpoint: box.endpoint },
+          input: { scene_id: scene.id },
+        },
+      });
+      if (res.error) throw res.error;
+      return ((res.data && res.data.scrapeSingleScene) || [])
+        .filter((sc) => sc.remote_site_id)
+        .map((sc) => ({
+          id: sc.remote_site_id,
+          title: sc.title,
+          details: sc.details,
+          release_date: sc.date,
+          code: sc.code,
+          duration: sc.duration,
+          studio: sc.studio && { name: sc.studio.name },
+          performers: (sc.performers || []).map((pf) => ({ performer: { name: pf.name } })),
+          fileMatch: true,
+        }));
+    }
+
     async function onSearch(ev) {
       ev.preventDefault();
       if (!box) return;
@@ -1006,23 +1031,56 @@
                   (anchorName || "this performer")
           );
         } else {
+          const filtersOn =
+            (useText && text.trim()) ||
+            (useStudio && (studioPick || studioName.trim())) ||
+            selectedPerformerIds.length ||
+            selectedTagIds.length ||
+            (useCode && code.trim()) ||
+            (useUrl && url.trim()) ||
+            (useDate && date.trim());
+          const wantFile = !!scene && useFileMatch;
+
+          let fileHits = [];
+          let fileError;
+          if (wantFile) {
+            try {
+              fileHits = await runFileMatch();
+            } catch (err) {
+              console.warn(LOG, "file match failed", err);
+              fileError = err.message || String(err);
+            }
+          }
+
+          const boxName = boxDisplayName(box, boxes.indexOf(box));
           let result;
           let note;
-          if (isTextOnlyBox(box)) {
-            result = await runTextOnlySearch();
-            note = result.note;
+          if (wantFile && !filtersOn) {
+            result = { count: fileHits.length, scenes: fileHits };
+            note = fileHits.length + " file match" + (fileHits.length === 1 ? "" : "es") + " on " + boxName;
           } else {
-            result = await runQueryScenes(box, buildSceneInput());
-            if (!result) {
+            if (isTextOnlyBox(box)) {
               result = await runTextOnlySearch();
               note = result.note;
             } else {
-              note =
-                result.count +
-                " total matches on " +
-                boxDisplayName(box, boxes.indexOf(box));
+              result = await runQueryScenes(box, buildSceneInput());
+              if (!result) {
+                result = await runTextOnlySearch();
+                note = result.note;
+              } else {
+                note = result.count + " total matches on " + boxName;
+              }
+            }
+            if (fileHits.length) {
+              const hitIds = new Set(fileHits.map((h) => h.id));
+              result = {
+                count: result.count,
+                scenes: fileHits.concat(result.scenes.filter((sc) => !hitIds.has(sc.id))),
+              };
+              note = fileHits.length + " by file, then " + note;
             }
           }
+          if (fileError) note += " (file match failed: " + fileError + ")";
           setSceneResult(result);
           setResultNote(note);
         }
@@ -1244,6 +1302,23 @@
                   "div",
                   { key: "text-only-note", className: "text-muted ultimate-scrape-note" },
                   "This stash-box only supports a text search (title, studio and performer names). Text, Studio and ticked performers are searched; the other filters are applied to the 100 best matches."
+                )
+              : null,
+            scene
+              ? fieldRow(
+                  {
+                    id: "ultimate-scrape-use-file",
+                    label: "File match",
+                    enabled: useFileMatch,
+                    onToggle: () => setUseFileMatch(!useFileMatch),
+                    title:
+                      "The same lookup as Scrape with: the scene's phash, oshash and md5 are sent to the selected stash-box",
+                  },
+                  [
+                    muted(
+                      "Also look up this file's fingerprints (phash, oshash, md5). Exact matches are listed first, and with no other filter on, only this runs."
+                    ),
+                  ]
                 )
               : null,
             fieldRow(
@@ -1530,7 +1605,14 @@
         React.createElement(
           "tr",
           { key: s.id },
-          React.createElement("td", { title: s.details || undefined }, s.title),
+          React.createElement(
+            "td",
+            { title: s.details || undefined },
+            s.fileMatch
+              ? React.createElement(Badge, { variant: "success", className: "mr-2" }, "File match")
+              : null,
+            s.title
+          ),
           React.createElement("td", null, s.release_date),
           React.createElement("td", null, s.code),
           React.createElement("td", null, s.studio && s.studio.name),
