@@ -126,9 +126,6 @@
 
 .playerQuickAdd-result {
   border-radius: 4px;
-  display: flex;
-  gap: 0.6em;
-  justify-content: space-between;
   padding: 0.4em 0.6em;
   text-align: left;
 }

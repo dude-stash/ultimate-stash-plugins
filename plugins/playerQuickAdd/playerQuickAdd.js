@@ -209,8 +209,6 @@
     }
 
     function onKeyDown(e) {
-      // The player has its own hotkeys (space, f, m, arrows) that must not fire while typing.
-      e.stopPropagation();
       if (e.key === "Escape") {
         if (query) setQuery("");
         else props.onClose();
@@ -220,6 +218,17 @@
         else if (canCreate) create();
       }
     }
+
+    // Native listener: React's handlers run at the app root, after the player has already seen the key.
+    const keyHandler = React.useRef(null);
+    keyHandler.current = onKeyDown;
+    React.useEffect(() => {
+      const el = inputRef.current;
+      if (!el) return undefined;
+      const listener = (e) => keyHandler.current(e);
+      el.addEventListener("keydown", listener);
+      return () => el.removeEventListener("keydown", listener);
+    }, []);
 
     const tabs = Object.keys(KINDS).map((k) =>
       h(
@@ -268,8 +277,8 @@
           disabled: busy,
           onClick: () => change(kind, item, "ADD"),
         },
-        h("span", null, label(item)),
-        h("span", { className: "playerQuickAdd-count" }, item.scene_count)
+        label(item) + " ",
+        h("span", { className: "playerQuickAdd-count" }, "(" + item.scene_count + ")")
       )
     );
     if (canCreate) {
@@ -316,8 +325,6 @@
         placeholder: "Search " + KINDS[kind].label.toLowerCase() + "…",
         autoComplete: "off",
         onChange: (e) => setQuery(e.target.value),
-        onKeyDown: onKeyDown,
-        onKeyUp: (e) => e.stopPropagation(),
       }),
       error ? h("div", { className: "playerQuickAdd-error" }, error) : null,
       h("div", { className: "playerQuickAdd-results" }, rows)
@@ -395,7 +402,8 @@
     // Inside the player element so the panel stays visible in fullscreen.
     const root = document.createElement("div");
     root.className = "playerQuickAdd-root";
-    ["click", "dblclick", "mousedown", "touchstart", "wheel"].forEach((ev) =>
+    // The player's hotkeys (space, f, m, arrows) listen on the player element and must not see keys typed here.
+    ["click", "dblclick", "mousedown", "touchstart", "wheel", "keydown", "keyup", "keypress"].forEach((ev) =>
       root.addEventListener(ev, (e) => e.stopPropagation())
     );
     p.el().appendChild(root);
