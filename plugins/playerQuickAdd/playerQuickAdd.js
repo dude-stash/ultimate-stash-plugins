@@ -23,7 +23,7 @@
       field: "tags",
       bulkField: "tag_ids",
       search: gql(
-        "query PlayerQuickAddTags($q: String!, $n: Int!) { findTags(filter: { q: $q, per_page: $n, sort: \"name\" }) { tags { id name } } }"
+        "query PlayerQuickAddTags($q: String!, $n: Int!) { findTags(filter: { q: $q, per_page: $n, sort: \"scenes_count\", direction: DESC }) { tags { id name scene_count } } }"
       ),
       list: (data) => data.findTags.tags,
       create: gql(
@@ -36,7 +36,7 @@
       field: "performers",
       bulkField: "performer_ids",
       search: gql(
-        "query PlayerQuickAddPerformers($q: String!, $n: Int!) { findPerformers(filter: { q: $q, per_page: $n, sort: \"name\" }) { performers { id name disambiguation } } }"
+        "query PlayerQuickAddPerformers($q: String!, $n: Int!) { findPerformers(filter: { q: $q, per_page: $n, sort: \"scenes_count\", direction: DESC }) { performers { id name disambiguation scene_count } } }"
       ),
       list: (data) => data.findPerformers.performers,
       create: gql(
@@ -268,7 +268,8 @@
           disabled: busy,
           onClick: () => change(kind, item, "ADD"),
         },
-        label(item)
+        h("span", null, label(item)),
+        h("span", { className: "playerQuickAdd-count" }, item.scene_count)
       )
     );
     if (canCreate) {

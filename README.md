@@ -126,7 +126,7 @@ library is included, so there's nothing to install with pip.
 
 **Manual:** [How to use Stash Metadata Mapper](docs/stash-metadata-mapper.md)
 
-### Player Quick Add (v0.1)
+### Player Quick Add (v0.1.1)
 
 Add and remove a scene's tags and performers from inside the video player.
 
@@ -134,7 +134,7 @@ Add and remove a scene's tags and performers from inside the video player.
 
 - A button in the player's control bar opens a panel over the video, so it
   works in fullscreen.
-- Search tags or performers, click one (or press `Enter`) to add it.
+- Search tags or performers, most-used first with their scene counts; click one (or press `Enter`) to add it.
 - Create a new tag or performer on the spot when nothing matches.
 - Remove one with the `×` on its chip.
 

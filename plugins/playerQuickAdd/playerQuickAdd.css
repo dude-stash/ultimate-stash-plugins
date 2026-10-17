@@ -126,6 +126,9 @@
 
 .playerQuickAdd-result {
   border-radius: 4px;
+  display: flex;
+  gap: 0.6em;
+  justify-content: space-between;
   padding: 0.4em 0.6em;
   text-align: left;
 }
@@ -137,4 +140,8 @@
 
 .playerQuickAdd-result.is-create {
   color: #5bd67a;
+}
+
+.playerQuickAdd-count {
+  opacity: 0.6;
 }
