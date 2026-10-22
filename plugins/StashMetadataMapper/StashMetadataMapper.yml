@@ -10,7 +10,7 @@ errLog: warning
 settings:
   runOnSceneUpdate:
     displayName: Write when a scene is saved
-    description: "Write a scene's metadata into its MP4 file as soon as it is saved."
+    description: "Write a scene's metadata into its MP4 file as soon as it is saved. Library scans never write."
     type: BOOLEAN
   runManually:
     displayName: Allow the manual task to write files
@@ -88,7 +88,7 @@ tasks:
 
 hooks:
   - name: Auto-export on scene update
-    description: Writes the scene's metadata to its MP4 file when it is saved, if enabled in the settings.
+    description: Writes the scene's metadata to its MP4 file when it is saved, if enabled in the settings. Skips updates made by a library scan.
     triggeredBy:
       - Scene.Update.Post
     defaultArgs:

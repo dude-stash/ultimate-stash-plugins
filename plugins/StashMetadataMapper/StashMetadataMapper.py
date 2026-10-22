@@ -322,6 +322,9 @@ def handle_hook(stash, args, settings, dry_run):
     if not scene_id:
         log("Hook fired with no scene ID in hookContext", "WARNING")
         return "no scene id"
+    # Scans fire Scene.Update.Post with no input; only edits and Identify carry the changed fields
+    if not hook_ctx.get("inputFields"):
+        return f"skipped scene {scene_id}: updated by a scan, not an edit"
     scene = stash.find_scene(scene_id)
     if not scene:
         log(f"Scene {scene_id} not found", "WARNING")
