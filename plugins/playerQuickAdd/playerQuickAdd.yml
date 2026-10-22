@@ -1,6 +1,6 @@
 name: Player Quick Add
 description: Add and remove a scene's tags and performers from a panel inside the video player, creating new ones on the spot. Works in fullscreen.
-version: 0.1.1
+version: 0.2.0
 ui:
   javascript:
     - playerQuickAdd.js

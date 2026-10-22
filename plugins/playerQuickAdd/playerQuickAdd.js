@@ -15,7 +15,7 @@
 
   const PLAYER_ID = "VideoJsPlayer";
   const PER_PAGE = 12;
-  const SEARCH_DELAY = 250;
+  const SEARCH_DELAY = 120;
 
   const KINDS = {
     tags: {
@@ -104,9 +104,10 @@
     const [query, setQuery] = React.useState("");
     const [results, setResults] = React.useState([]);
     const [scene, setScene] = React.useState(null);
-    const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
+    const [active, setActive] = React.useState(0);
     const inputRef = React.useRef(null);
+    const listRef = React.useRef(null);
 
     React.useEffect(() => {
       let cancelled = false;
@@ -164,62 +165,122 @@
     const canCreate = !!trimmed && !exact && !!scene;
     const choices = results.filter((r) => !has(r.id));
 
-    async function run(fn) {
-      if (busy) return;
-      setBusy(true);
+    function patchScene(k, fn) {
+      setScene((s) => {
+        if (!s) return s;
+        const patch = {};
+        patch[KINDS[k].field] = fn(s[KINDS[k].field]);
+        return Object.assign({}, s, patch);
+      });
+    }
+
+    function fail(err) {
+      console.warn(LOG, err);
+      setError(errorText(err));
+    }
+
+    function clearSearch() {
+      setQuery("");
+      setResults([]);
+      if (inputRef.current) inputRef.current.focus();
+    }
+
+    // The chip appears at once and the request runs behind it; it is taken back out if the request fails.
+    function add(k, item) {
+      patchScene(k, (list) => list.concat([item]));
+      clearSearch();
       setError("");
-      try {
-        await fn();
-      } catch (err) {
-        console.warn(LOG, err);
-        setError(errorText(err));
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    function change(k, item, mode) {
-      return run(async () => {
-        const updated = await changeScene(sceneId, k, item.id, mode);
-        if (updated) setScene(updated);
-        refreshPage();
-        if (mode === "ADD") {
-          setQuery("");
-          setResults([]);
-          if (inputRef.current) inputRef.current.focus();
-        }
+      changeScene(sceneId, k, item.id, "ADD").then(refreshPage, (err) => {
+        patchScene(k, (list) => list.filter((c) => c.id !== item.id));
+        fail(err);
       });
     }
 
-    function create() {
-      return run(async () => {
-        const res = await client().mutate({
-          mutation: KINDS[kind].create,
-          variables: { name: trimmed },
-          fetchPolicy: "no-cache",
+    function remove(k, item) {
+      if (String(item.id).indexOf("new:") === 0) return;
+      patchScene(k, (list) => list.filter((c) => c.id !== item.id));
+      setError("");
+      changeScene(sceneId, k, item.id, "REMOVE").then(refreshPage, (err) => {
+        patchScene(k, (list) => list.concat([item]));
+        fail(err);
+      });
+    }
+
+    function create(k, name) {
+      const temp = { id: "new:" + name, name: name };
+      patchScene(k, (list) => list.concat([temp]));
+      clearSearch();
+      setError("");
+      client()
+        .mutate({ mutation: KINDS[k].create, variables: { name: name }, fetchPolicy: "no-cache" })
+        .then((res) => {
+          const item = KINDS[k].created(res.data);
+          patchScene(k, (list) => list.map((c) => (c.id === temp.id ? item : c)));
+          return changeScene(sceneId, k, item.id, "ADD");
+        })
+        .then(refreshPage, (err) => {
+          patchScene(k, (list) => list.filter((c) => c.id !== temp.id));
+          fail(err);
         });
-        const item = KINDS[kind].created(res.data);
-        const updated = await changeScene(sceneId, kind, item.id, "ADD");
-        if (updated) setScene(updated);
-        refreshPage();
-        setQuery("");
-        setResults([]);
-        if (inputRef.current) inputRef.current.focus();
-      });
     }
+
+    // Enter before the debounced search has answered: search right now instead of doing nothing.
+    function addTyped() {
+      const k = kind;
+      const name = trimmed;
+      client()
+        .query({ query: KINDS[k].search, variables: { q: name, n: PER_PAGE }, fetchPolicy: "no-cache" })
+        .then((res) => {
+          const found = KINDS[k].list(res.data).filter((r) => !has(r.id));
+          if (found.length) add(k, found[0]);
+          else if (!KINDS[k].list(res.data).length) create(k, name);
+          else clearSearch();
+        }, fail);
+    }
+
+    // What Tab, the arrows, the mouse and Enter move over: the new results, then the create row.
+    const entries = choices.map((item) => () => add(kind, item));
+    if (canCreate) entries.push(() => create(kind, trimmed));
+    const selectable = results.length > 0 && entries.length > 0;
+    const sel = Math.min(active, entries.length - 1);
+
+    React.useEffect(() => {
+      setActive(0);
+    }, [kind, results]);
+
+    React.useEffect(() => {
+      const row = listRef.current && listRef.current.children[sel];
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+    }, [sel, results]);
 
     function onKeyDown(e) {
-      // The player has its own hotkeys (space, f, m, arrows) that must not fire while typing.
-      e.stopPropagation();
       if (e.key === "Escape") {
         if (query) setQuery("");
         else props.onClose();
+      } else if (e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!selectable) return;
+        e.preventDefault();
+        const back = e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey);
+        setActive((sel + (back ? entries.length - 1 : 1)) % entries.length);
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (choices.length) change(kind, choices[0], "ADD");
-        else if (canCreate) create();
+        if (!trimmed || !scene) return;
+        if (selectable) entries[sel]();
+        else if (results.length) clearSearch();
+        else addTyped();
       }
     }
+
+    // Native listener: React's handlers run at the app root, after the player has already seen the key.
+    const keyHandler = React.useRef(null);
+    keyHandler.current = onKeyDown;
+    React.useEffect(() => {
+      const el = inputRef.current;
+      if (!el) return undefined;
+      const listener = (e) => keyHandler.current(e);
+      el.addEventListener("keydown", listener);
+      return () => el.removeEventListener("keydown", listener);
+    }, []);
 
     const tabs = Object.keys(KINDS).map((k) =>
       h(
@@ -250,40 +311,44 @@
             className: "playerQuickAdd-chip-remove",
             title: "Remove",
             "aria-label": "Remove " + item.name,
-            disabled: busy,
-            onClick: () => change(kind, item, "REMOVE"),
+            onClick: () => remove(kind, item),
           },
           "×"
         )
       )
     );
 
-    const rows = choices.map((item) =>
+    const enterHint = h("span", { className: "playerQuickAdd-enter", "aria-hidden": "true" }, "⏎");
+    const rowProps = (i, extra) => ({
+      type: "button",
+      tabIndex: -1,
+      className: "playerQuickAdd-result" + extra + (selectable && i === sel ? " is-next" : ""),
+      onMouseEnter: () => setActive(i),
+      onClick: entries[i],
+    });
+    const mark = (i) => (selectable && i === sel ? enterHint : null);
+
+    const rows = choices.map((item, i) =>
       h(
         "button",
-        {
-          key: item.id,
-          type: "button",
-          className: "playerQuickAdd-result",
-          disabled: busy,
-          onClick: () => change(kind, item, "ADD"),
-        },
-        h("span", null, label(item)),
-        h("span", { className: "playerQuickAdd-count" }, item.scene_count)
+        Object.assign({ key: item.id }, rowProps(i, "")),
+        h(
+          "span",
+          null,
+          label(item) + " ",
+          h("span", { className: "playerQuickAdd-count" }, "(" + item.scene_count + ")")
+        ),
+        mark(i)
       )
     );
     if (canCreate) {
+      const i = choices.length;
       rows.push(
         h(
           "button",
-          {
-            key: "create",
-            type: "button",
-            className: "playerQuickAdd-result is-create",
-            disabled: busy,
-            onClick: create,
-          },
-          "Create “" + trimmed + "”"
+          Object.assign({ key: "create" }, rowProps(i, " is-create")),
+          h("span", null, "Create “" + trimmed + "”"),
+          mark(i)
         )
       );
     }
@@ -316,11 +381,9 @@
         placeholder: "Search " + KINDS[kind].label.toLowerCase() + "…",
         autoComplete: "off",
         onChange: (e) => setQuery(e.target.value),
-        onKeyDown: onKeyDown,
-        onKeyUp: (e) => e.stopPropagation(),
       }),
       error ? h("div", { className: "playerQuickAdd-error" }, error) : null,
-      h("div", { className: "playerQuickAdd-results" }, rows)
+      h("div", { className: "playerQuickAdd-results", ref: listRef }, rows)
     );
   }
 
@@ -395,7 +458,8 @@
     // Inside the player element so the panel stays visible in fullscreen.
     const root = document.createElement("div");
     root.className = "playerQuickAdd-root";
-    ["click", "dblclick", "mousedown", "touchstart", "wheel"].forEach((ev) =>
+    // The player's hotkeys (space, f, m, arrows) listen on the player element and must not see keys typed here.
+    ["click", "dblclick", "mousedown", "touchstart", "wheel", "keydown", "keyup", "keypress"].forEach((ev) =>
       root.addEventListener(ev, (e) => e.stopPropagation())
     );
     p.el().appendChild(root);
