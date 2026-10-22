@@ -1,6 +1,6 @@
 name: Stash Metadata Mapper
 description: Export scene metadata into MP4 metadata atoms for portable, self-describing media files
-version: 0.3.0
+version: 0.3.1
 exec:
   - python
   - "{pluginDir}/StashMetadataMapper.py"
