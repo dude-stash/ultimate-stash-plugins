@@ -128,9 +128,9 @@
   align-items: center;
   border-radius: 4px;
   display: flex;
-  justify-content: space-between;
   padding: 0.4em 0.6em;
   text-align: left;
+  width: 100%;
 }
 
 .playerQuickAdd-result:hover:not(:disabled) {
@@ -147,7 +147,7 @@
   border-radius: 3px;
   font-size: 0.85em;
   line-height: 1;
-  margin-left: 0.6em;
+  margin-left: auto;
   padding: 0.15em 0.4em;
 }
 
@@ -157,4 +157,9 @@
 
 .playerQuickAdd-count {
   opacity: 0.6;
+}
+
+.playerQuickAdd-result > span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
