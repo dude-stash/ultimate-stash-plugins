@@ -22,8 +22,14 @@
 
 .playerQuickAdd-root {
   bottom: 100px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: none;
   position: absolute;
   right: 1em;
+  top: 1em;
+  width: min(22em, calc(100% - 2em));
   z-index: 3;
 }
 
@@ -33,10 +39,10 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
   color: #fff;
   font-size: 14px;
-  max-height: 60vh;
+  max-height: 100%;
   overflow-y: auto;
   padding: 0.6em;
-  width: min(22em, calc(100vw - 2em));
+  pointer-events: auto;
 }
 
 .playerQuickAdd-head {
@@ -125,10 +131,10 @@
 }
 
 .playerQuickAdd-result {
-  align-items: center;
   border-radius: 4px;
-  display: flex;
-  padding: 0.4em 0.6em;
+  display: block;
+  padding: 0.4em 2.6em 0.4em 0.6em;
+  position: relative;
   text-align: left;
   width: 100%;
 }
@@ -142,8 +148,11 @@
   border-radius: 3px;
   font-size: 0.85em;
   line-height: 1;
-  margin-left: auto;
   padding: 0.15em 0.4em;
+  position: absolute;
+  right: 0.6em;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .playerQuickAdd-result.is-create {
@@ -152,9 +161,4 @@
 
 .playerQuickAdd-count {
   opacity: 0.6;
-}
-
-.playerQuickAdd-result > span:first-child {
-  flex: 1 1 auto;
-  min-width: 0;
 }
