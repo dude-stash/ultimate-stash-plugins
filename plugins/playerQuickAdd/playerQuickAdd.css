@@ -21,7 +21,7 @@
 }
 
 .playerQuickAdd-root {
-  bottom: 4.5em;
+  bottom: 100px;
   position: absolute;
   right: 1em;
   z-index: 3;

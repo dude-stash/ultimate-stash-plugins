@@ -10,7 +10,7 @@ works in fullscreen too.
 2. Click it. A panel opens over the video with a **Tags** and a **Performers**
    tab. What the scene already has is shown as chips at the top.
 3. Type to search. Results are sorted by number of scenes, most first, with the count in parentheses after the name. Click a result, or press **Enter** to add the first one.
-   The change is saved straight away, and the scene page behind the player
+   The chip appears at once and the search box clears, so you can type the next one while it saves; the scene page behind the player
    updates.
 4. If nothing matches exactly, the last row reads **Create "name"**. Click it,
    or press **Enter** when no results are listed, to create the tag or

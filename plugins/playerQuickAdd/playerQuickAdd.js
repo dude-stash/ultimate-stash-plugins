@@ -15,7 +15,7 @@
 
   const PLAYER_ID = "VideoJsPlayer";
   const PER_PAGE = 12;
-  const SEARCH_DELAY = 250;
+  const SEARCH_DELAY = 120;
 
   const KINDS = {
     tags: {
@@ -104,7 +104,6 @@
     const [query, setQuery] = React.useState("");
     const [results, setResults] = React.useState([]);
     const [scene, setScene] = React.useState(null);
-    const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
     const inputRef = React.useRef(null);
 
@@ -164,48 +163,77 @@
     const canCreate = !!trimmed && !exact && !!scene;
     const choices = results.filter((r) => !has(r.id));
 
-    async function run(fn) {
-      if (busy) return;
-      setBusy(true);
+    function patchScene(k, fn) {
+      setScene((s) => {
+        if (!s) return s;
+        const patch = {};
+        patch[KINDS[k].field] = fn(s[KINDS[k].field]);
+        return Object.assign({}, s, patch);
+      });
+    }
+
+    function fail(err) {
+      console.warn(LOG, err);
+      setError(errorText(err));
+    }
+
+    function clearSearch() {
+      setQuery("");
+      setResults([]);
+      if (inputRef.current) inputRef.current.focus();
+    }
+
+    // The chip appears at once and the request runs behind it; it is taken back out if the request fails.
+    function add(k, item) {
+      patchScene(k, (list) => list.concat([item]));
+      clearSearch();
       setError("");
-      try {
-        await fn();
-      } catch (err) {
-        console.warn(LOG, err);
-        setError(errorText(err));
-      } finally {
-        setBusy(false);
-      }
-    }
-
-    function change(k, item, mode) {
-      return run(async () => {
-        const updated = await changeScene(sceneId, k, item.id, mode);
-        if (updated) setScene(updated);
-        refreshPage();
-        if (mode === "ADD") {
-          setQuery("");
-          setResults([]);
-          if (inputRef.current) inputRef.current.focus();
-        }
+      changeScene(sceneId, k, item.id, "ADD").then(refreshPage, (err) => {
+        patchScene(k, (list) => list.filter((c) => c.id !== item.id));
+        fail(err);
       });
     }
 
-    function create() {
-      return run(async () => {
-        const res = await client().mutate({
-          mutation: KINDS[kind].create,
-          variables: { name: trimmed },
-          fetchPolicy: "no-cache",
+    function remove(k, item) {
+      if (String(item.id).indexOf("new:") === 0) return;
+      patchScene(k, (list) => list.filter((c) => c.id !== item.id));
+      setError("");
+      changeScene(sceneId, k, item.id, "REMOVE").then(refreshPage, (err) => {
+        patchScene(k, (list) => list.concat([item]));
+        fail(err);
+      });
+    }
+
+    function create(k, name) {
+      const temp = { id: "new:" + name, name: name };
+      patchScene(k, (list) => list.concat([temp]));
+      clearSearch();
+      setError("");
+      client()
+        .mutate({ mutation: KINDS[k].create, variables: { name: name }, fetchPolicy: "no-cache" })
+        .then((res) => {
+          const item = KINDS[k].created(res.data);
+          patchScene(k, (list) => list.map((c) => (c.id === temp.id ? item : c)));
+          return changeScene(sceneId, k, item.id, "ADD");
+        })
+        .then(refreshPage, (err) => {
+          patchScene(k, (list) => list.filter((c) => c.id !== temp.id));
+          fail(err);
         });
-        const item = KINDS[kind].created(res.data);
-        const updated = await changeScene(sceneId, kind, item.id, "ADD");
-        if (updated) setScene(updated);
-        refreshPage();
-        setQuery("");
-        setResults([]);
-        if (inputRef.current) inputRef.current.focus();
-      });
+    }
+
+    // Enter before the debounced search has answered: search right now instead of doing nothing.
+    function addTyped() {
+      const k = kind;
+      const name = trimmed;
+      client()
+        .query({ query: KINDS[k].search, variables: { q: name, n: PER_PAGE }, fetchPolicy: "no-cache" })
+        .then((res) => {
+          const found = KINDS[k].list(res.data).filter((r) => !has(r.id));
+          if (found.length) add(k, found[0]);
+          else if (!KINDS[k].list(res.data).length) create(k, name);
+          else clearSearch();
+        }, fail);
     }
 
     function onKeyDown(e) {
@@ -214,8 +242,11 @@
         else props.onClose();
       } else if (e.key === "Enter") {
         e.preventDefault();
-        if (choices.length) change(kind, choices[0], "ADD");
-        else if (canCreate) create();
+        if (!trimmed || !scene) return;
+        if (choices.length) add(kind, choices[0]);
+        else if (results.length && !canCreate) clearSearch();
+        else if (canCreate && results.length) create(kind, trimmed);
+        else addTyped();
       }
     }
 
@@ -259,8 +290,7 @@
             className: "playerQuickAdd-chip-remove",
             title: "Remove",
             "aria-label": "Remove " + item.name,
-            disabled: busy,
-            onClick: () => change(kind, item, "REMOVE"),
+            onClick: () => remove(kind, item),
           },
           "×"
         )
@@ -274,8 +304,7 @@
           key: item.id,
           type: "button",
           className: "playerQuickAdd-result",
-          disabled: busy,
-          onClick: () => change(kind, item, "ADD"),
+          onClick: () => add(kind, item),
         },
         label(item) + " ",
         h("span", { className: "playerQuickAdd-count" }, "(" + item.scene_count + ")")
@@ -289,8 +318,7 @@
             key: "create",
             type: "button",
             className: "playerQuickAdd-result is-create",
-            disabled: busy,
-            onClick: create,
+            onClick: () => create(kind, trimmed),
           },
           "Create “" + trimmed + "”"
         )
