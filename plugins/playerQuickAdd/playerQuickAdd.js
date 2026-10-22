@@ -297,17 +297,26 @@
       )
     );
 
-    const rows = choices.map((item) =>
+    // Enter takes the first result, or creates when the results hold nothing new.
+    const enterCreate = !choices.length && canCreate && results.length > 0;
+    const enterHint = h("span", { className: "playerQuickAdd-enter", "aria-hidden": "true" }, "⏎");
+
+    const rows = choices.map((item, i) =>
       h(
         "button",
         {
           key: item.id,
           type: "button",
-          className: "playerQuickAdd-result",
+          className: "playerQuickAdd-result" + (i === 0 ? " is-next" : ""),
           onClick: () => add(kind, item),
         },
-        label(item) + " ",
-        h("span", { className: "playerQuickAdd-count" }, "(" + item.scene_count + ")")
+        h(
+          "span",
+          null,
+          label(item) + " ",
+          h("span", { className: "playerQuickAdd-count" }, "(" + item.scene_count + ")")
+        ),
+        i === 0 ? enterHint : null
       )
     );
     if (canCreate) {
@@ -317,10 +326,11 @@
           {
             key: "create",
             type: "button",
-            className: "playerQuickAdd-result is-create",
+            className: "playerQuickAdd-result is-create" + (enterCreate ? " is-next" : ""),
             onClick: () => create(kind, trimmed),
           },
-          "Create “" + trimmed + "”"
+          h("span", null, "Create “" + trimmed + "”"),
+          enterCreate ? enterHint : null
         )
       );
     }
