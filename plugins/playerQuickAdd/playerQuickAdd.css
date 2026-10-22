@@ -29,12 +29,12 @@
   position: absolute;
   right: 1em;
   top: 1em;
-  width: min(22em, calc(100% - 2em));
+  width: min(33em, calc(100% - 2em));
   z-index: 3;
 }
 
 .playerQuickAdd-panel {
-  background: rgba(20, 24, 28, 0.94);
+  background: rgba(20, 24, 28, 0.8);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
   color: #fff;
