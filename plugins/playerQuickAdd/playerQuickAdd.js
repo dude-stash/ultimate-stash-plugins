@@ -105,7 +105,9 @@
     const [results, setResults] = React.useState([]);
     const [scene, setScene] = React.useState(null);
     const [error, setError] = React.useState("");
+    const [active, setActive] = React.useState(0);
     const inputRef = React.useRef(null);
+    const listRef = React.useRef(null);
 
     React.useEffect(() => {
       let cancelled = false;
@@ -236,16 +238,35 @@
         }, fail);
     }
 
+    // What Tab, the arrows, the mouse and Enter move over: the new results, then the create row.
+    const entries = choices.map((item) => () => add(kind, item));
+    if (canCreate) entries.push(() => create(kind, trimmed));
+    const selectable = results.length > 0 && entries.length > 0;
+    const sel = Math.min(active, entries.length - 1);
+
+    React.useEffect(() => {
+      setActive(0);
+    }, [kind, results]);
+
+    React.useEffect(() => {
+      const row = listRef.current && listRef.current.children[sel];
+      if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+    }, [sel, results]);
+
     function onKeyDown(e) {
       if (e.key === "Escape") {
         if (query) setQuery("");
         else props.onClose();
+      } else if (e.key === "Tab" || e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!selectable) return;
+        e.preventDefault();
+        const back = e.key === "ArrowUp" || (e.key === "Tab" && e.shiftKey);
+        setActive((sel + (back ? entries.length - 1 : 1)) % entries.length);
       } else if (e.key === "Enter") {
         e.preventDefault();
         if (!trimmed || !scene) return;
-        if (choices.length) add(kind, choices[0]);
-        else if (results.length && !canCreate) clearSearch();
-        else if (canCreate && results.length) create(kind, trimmed);
+        if (selectable) entries[sel]();
+        else if (results.length) clearSearch();
         else addTyped();
       }
     }
@@ -297,40 +318,37 @@
       )
     );
 
-    // Enter takes the first result, or creates when the results hold nothing new.
-    const enterCreate = !choices.length && canCreate && results.length > 0;
     const enterHint = h("span", { className: "playerQuickAdd-enter", "aria-hidden": "true" }, "⏎");
+    const rowProps = (i, extra) => ({
+      type: "button",
+      tabIndex: -1,
+      className: "playerQuickAdd-result" + extra + (selectable && i === sel ? " is-next" : ""),
+      onMouseEnter: () => setActive(i),
+      onClick: entries[i],
+    });
+    const mark = (i) => (selectable && i === sel ? enterHint : null);
 
     const rows = choices.map((item, i) =>
       h(
         "button",
-        {
-          key: item.id,
-          type: "button",
-          className: "playerQuickAdd-result" + (i === 0 ? " is-next" : ""),
-          onClick: () => add(kind, item),
-        },
+        Object.assign({ key: item.id }, rowProps(i, "")),
         h(
           "span",
           null,
           label(item) + " ",
           h("span", { className: "playerQuickAdd-count" }, "(" + item.scene_count + ")")
         ),
-        i === 0 ? enterHint : null
+        mark(i)
       )
     );
     if (canCreate) {
+      const i = choices.length;
       rows.push(
         h(
           "button",
-          {
-            key: "create",
-            type: "button",
-            className: "playerQuickAdd-result is-create" + (enterCreate ? " is-next" : ""),
-            onClick: () => create(kind, trimmed),
-          },
+          Object.assign({ key: "create" }, rowProps(i, " is-create")),
           h("span", null, "Create “" + trimmed + "”"),
-          enterCreate ? enterHint : null
+          mark(i)
         )
       );
     }
@@ -365,7 +383,7 @@
         onChange: (e) => setQuery(e.target.value),
       }),
       error ? h("div", { className: "playerQuickAdd-error" }, error) : null,
-      h("div", { className: "playerQuickAdd-results" }, rows)
+      h("div", { className: "playerQuickAdd-results", ref: listRef }, rows)
     );
   }
 
