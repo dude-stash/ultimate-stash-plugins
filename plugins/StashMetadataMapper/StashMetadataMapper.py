@@ -95,7 +95,7 @@ def rescan_changed(stash, changed, settings):
                 f"track them if moved: {', '.join(paths)}", "ERROR")
 
 
-LEVELS = {"INFO": "i", "WARNING": "w", "ERROR": "e"}
+LEVELS = {"DEBUG": "d", "INFO": "i", "WARNING": "w", "ERROR": "e"}
 
 
 def log(msg, level="INFO"):
@@ -302,14 +302,20 @@ def _preview(path, scene_id, new_meta):
 
 
 def _write(path, scene_id, new_meta):
+    """Write the atoms that differ from the file's and return True, or False if none differ or the write failed."""
     try:
         mp4 = MP4(path)
         if mp4.tags is None:
             mp4.add_tags()
-        for key, val in new_meta.items():
+        # Saving rewrites the file and changes its oshash, so skip it when another plugin's edit left the atoms as they are
+        stale = {key: val for key, val in new_meta.items() if mp4.tags.get(key) != val}
+        if not stale:
+            log(f"Scene {scene_id}: already up to date → {path}", "DEBUG")
+            return False
+        for key, val in stale.items():
             mp4.tags[key] = val
         mp4.save()
-        log(f"Scene {scene_id}: wrote {len(new_meta)} atom(s) → {path}")
+        log(f"Scene {scene_id}: wrote {', '.join(_atom_label(k) for k in stale)} → {path}")
         return True
     except Exception as exc:
         log(f"Scene {scene_id}: failed writing {path}: {exc}", "ERROR")

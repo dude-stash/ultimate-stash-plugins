@@ -64,7 +64,13 @@ Fields that are empty in Stash are not written.
   run **Export Metadata** to write every scene in your library. This one needs
   *Allow the manual task to write files* turned on.
 
-Check **Settings → Logs** for what was written and any failures.
+A file is only saved when at least one atom differs from what it already
+holds, so running the task again, or another plugin editing the scene, leaves
+files that are up to date untouched.
+
+Check **Settings → Logs** for what was written and any failures. Each write
+names the atoms it changed, e.g. `Scene 3120: wrote keywords → …`. Files that
+were already up to date are logged at the Debug level.
 
 ## Why it rescans
 
