@@ -51,6 +51,12 @@ DEFAULT_SETTINGS = {
     "runManually": False,
 }
 
+# SceneUpdateInput fields that feed an atom; primary_file_id is here so a file made primary (e.g. by Scene Trimmer) gets written
+EXPORTED_INPUT_FIELDS = {
+    "title", "details", "date", "rating100", "studio_id", "performer_ids",
+    "tag_ids", "stash_ids", "cover_image", "primary_file_id",
+}
+
 # Settings that are strings, not booleans
 _STRING_SETTINGS = {"genreTagNames", "ignoreTagNames"}
 
@@ -329,8 +335,12 @@ def handle_hook(stash, args, settings, dry_run):
         log("Hook fired with no scene ID in hookContext", "WARNING")
         return "no scene id"
     # Scans fire Scene.Update.Post with no input; only edits and Identify carry the changed fields
-    if not hook_ctx.get("inputFields"):
+    fields = hook_ctx.get("inputFields")
+    if not fields:
         return f"skipped scene {scene_id}: updated by a scan, not an edit"
+    # Stash waits for post hooks before answering the update, so edits that write no atoms (another plugin's custom field, play count) must not wait on a file write
+    if not EXPORTED_INPUT_FIELDS.intersection(fields):
+        return f"skipped scene {scene_id}: no exported field changed"
     scene = stash.find_scene(scene_id)
     if not scene:
         log(f"Scene {scene_id} not found", "WARNING")

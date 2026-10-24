@@ -59,6 +59,10 @@ Fields that are empty in Stash are not written.
   its metadata into every MP4 file it has. Identify and bulk edits count as
   saves. Library scans never write, so they stay fast: a file added to a
   scene by a scan is not written until you save the scene or run the task.
+  Saves that change none of the exported fields, such as another plugin
+  storing a custom field (Scene Trimmer's trim ranges), don't write either:
+  Stash makes the save wait for the plugin, and rewriting a large file on a
+  network share can outlast the other plugin's request.
 - **Manually:** under **Settings → Tasks → Plugin Tasks**, run **Export
   Metadata (Dry Run)** to see in the log what would change, atom by atom. Then
   run **Export Metadata** to write every scene in your library. This one needs
