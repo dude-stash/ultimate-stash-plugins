@@ -88,12 +88,19 @@ leave the old one behind.
 
 Stash can't be told a new oshash directly, so after writing, the plugin queues
 a scan of the files whose bytes changed. The scan keeps each file's scene and
-updates its oshash. It also drops the file's phash, so the plugin has the
-scan generate the phash again for files that had one. Files that already had
-the same metadata are not touched and not rescanned.
+updates its oshash. Files that already had the same metadata are not touched
+and not rescanned.
 
-Stash runs one job at a time, so the scan starts after the plugin's task
-finishes, usually within a few seconds. Until it finishes, don't move the file.
+A scan that sees a new oshash also drops the file's phash, in case the video
+changed. Writing atoms doesn't change the video, so the phash is still right:
+the plugin notes it just before the scan and puts it back afterwards, instead
+of having it calculated again. That also keeps a phash made by a Generate that
+was already queued, such as the one Scene Trimmer runs after a trim.
+
+This happens in two small jobs, **Update file fingerprints** and **Restore
+phashes**, queued behind whatever is already waiting. Stash runs one job at a
+time, so the scan usually follows within a few seconds of the write. Until it
+finishes, don't move the file.
 Turn off *Rescan Changed Files* only if you rescan yourself, with **Rescan**
 ticked.
 

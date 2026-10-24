@@ -60,6 +60,10 @@ EXPORTED_INPUT_FIELDS = {
 # The task the save hook queues to write a scene's files
 WRITE_TASK = "Write scene metadata"
 
+# The tasks a write queues to rescan the files it changed, then put back the phashes the rescan drops
+RESCAN_TASK = "Update file fingerprints"
+RESTORE_TASK = "Restore phashes"
+
 # Settings that are strings, not booleans
 _STRING_SETTINGS = {"genreTagNames", "ignoreTagNames"}
 
@@ -83,25 +87,53 @@ def rescan_changed(stash, changed, settings):
 
     The oshash covers the file size and the last 64 KB, so writing atoms changes it, and
     Stash tracks files by path and oshash. The API cannot set an oshash, only a scan can
-    recompute it, and a scan drops the phash when the oshash changes, so phashes are
-    regenerated for files that had one. The scan keeps the file id, so nothing is re-linked.
+    recompute it. The scan keeps the file id, so nothing is re-linked. It is started by a
+    task queued behind the jobs already waiting; see handle_rescan.
     """
     if not changed:
         return
     if not settings.get("rescanChangedFiles"):
         log(f"{len(changed)} file(s) changed oshash and were not rescanned (rescan disabled)", "WARNING")
         return
-    for with_phash in (True, False):
-        paths = [p for p, had in changed if had == with_phash]
-        if not paths:
-            continue
-        try:
-            stash.rescan_files(paths, with_phash)
-            log(f"Queued a rescan of {len(paths)} file(s) to update their oshash"
-                f"{' and phash' if with_phash else ''}")
-        except Exception as exc:
-            log(f"Could not queue the rescan ({exc}). Rescan these files or Stash will not "
-                f"track them if moved: {', '.join(paths)}", "ERROR")
+    try:
+        stash.run_task(RESCAN_TASK, f"Stash Metadata Mapper: update the oshash of {len(changed)} file(s)",
+                       {"file_ids": [file_id for file_id, _ in changed]})
+        log(f"Queued a rescan of {len(changed)} file(s) to update their oshash")
+    except Exception as exc:
+        log(f"Could not queue the rescan ({exc}). Rescan these files or Stash will not "
+            f"track them if moved: {', '.join(path for _, path in changed)}", "ERROR")
+
+
+def handle_rescan(stash, args):
+    """Rescan the files a write changed, keeping their phash.
+
+    A scan that finds a new oshash drops the phash in case the video changed. Atoms don't touch the
+    video, so the phash is read here, just before the scan, and a task queued after the scan puts it
+    back. This task runs behind any job that was already waiting, such as a Generate making the phash,
+    so it sees that phash too. Paths are read now, so a file renamed since the write is still found.
+    """
+    files = stash.find_files(args.get("file_ids") or [])
+    if not files:
+        return "no files to rescan"
+    stash.rescan_files([f["path"] for f in files], False)
+    phashes = {f["id"]: f["phash"] for f in files if f.get("phash")}
+    if phashes:
+        stash.run_task(RESTORE_TASK, f"Stash Metadata Mapper: restore the phash of {len(phashes)} file(s)",
+                       {"phashes": phashes})
+    return f"queued a rescan of {len(files)} file(s)"
+
+
+def handle_restore(stash, args):
+    phashes = args.get("phashes") or {}
+    restored = 0
+    for f in stash.find_files(list(phashes)):
+        # A phash the scan kept (oshash unchanged) or one made since stays as it is
+        if not f.get("phash"):
+            stash.set_phash(f["id"], phashes[f["id"]])
+            restored += 1
+    if restored:
+        log(f"Put back the phash of {restored} file(s) after the rescan; their video didn't change")
+    return f"restored {restored} phash(es)"
 
 
 LEVELS = {"DEBUG": "d", "INFO": "i", "WARNING": "w", "ERROR": "e"}
@@ -249,7 +281,7 @@ def _atom_label(key):
 
 
 def process_scene(stash, scene, settings, dry_run):
-    """Write the scene's metadata and return [(path, had_phash)] for files whose oshash changed."""
+    """Write the scene's metadata and return [(file_id, path)] for files whose oshash changed."""
     scene_id = scene.get("id", "?")
     files = scene.get("files") or []
     changed = []
@@ -279,7 +311,7 @@ def process_scene(stash, scene, settings, dry_run):
         else:
             before = oshash(path)
             if _write(path, scene_id, new_meta) and oshash(path) != before:
-                changed.append((path, bool(f.get("phash"))))
+                changed.append((f["id"], path))
 
     return changed
 
@@ -410,6 +442,10 @@ def main():
         if not settings["runOnSceneUpdate"]:
             return "disabled in settings"
         return handle_write(stash, args, settings)
+    if mode == "rescan":
+        return handle_rescan(stash, args)
+    if mode == "restore":
+        return handle_restore(stash, args)
     if mode == "export":
         if not dry_run and not settings["runManually"]:
             log("disabled in settings: turn on 'Allow the manual task to write files'", "WARNING")

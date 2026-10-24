@@ -1,6 +1,6 @@
 name: Stash Metadata Mapper
 description: Export scene metadata into MP4 metadata atoms for portable, self-describing media files
-version: 0.3.3
+version: 0.3.4
 exec:
   - python
   - "{pluginDir}/StashMetadataMapper.py"
@@ -70,7 +70,7 @@ settings:
     displayName: Rescan Changed Files
     description: >
       Writing atoms changes a file's oshash, which Stash uses to track files. Rescan the
-      changed files so Stash records the new oshash (and regenerates their phash).
+      changed files so Stash records the new oshash (their phash is kept).
       Leave on unless you rescan yourself.
     type: BOOLEAN
 
@@ -89,6 +89,14 @@ tasks:
     description: Queued automatically when a scene is saved, so the save doesn't wait for the file to be written. Writes the saved scene's MP4 files.
     defaultArgs:
       mode: write
+  - name: Update file fingerprints
+    description: Queued automatically after a write. Rescans the written files so Stash records their new oshash.
+    defaultArgs:
+      mode: rescan
+  - name: Restore phashes
+    description: Queued automatically after that rescan. Puts back the phash the rescan dropped; the video didn't change, so it is still right.
+    defaultArgs:
+      mode: restore
 
 hooks:
   - name: Auto-export on scene update
