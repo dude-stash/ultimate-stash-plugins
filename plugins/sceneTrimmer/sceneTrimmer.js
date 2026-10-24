@@ -23,6 +23,7 @@
   const EPS = 0.05;
   const KF_EPS = 0.04;
   const KF_PLAY_BACK = 0.75;
+  const KF_BIAS = 0.01;
   const MIN_LEN = 0.1;
   const SAVE_DELAY = 500;
 
@@ -1032,7 +1033,25 @@
       flash(dir < 0 ? "No earlier keyframe" : "No later keyframe");
       return;
     }
-    seekTo(t, playing);
+    // Keyframe times are rounded to 3 decimals, so the exact time can sit just
+    // before the real keyframe and show the frame before it, or not repaint.
+    seekTo(t + KF_BIAS, playing);
+    if (!playing) repaintIfStale();
+  }
+
+  // A paused seek sometimes finishes without painting the new frame. If no
+  // frame was presented shortly after the seek, nudge the position to force one.
+  function repaintIfStale() {
+    const video = P.el() && P.el().querySelector("video");
+    if (!video || !video.requestVideoFrameCallback) return;
+    let painted = false;
+    video.requestVideoFrameCallback(() => {
+      painted = true;
+    });
+    setTimeout(() => {
+      if (painted || !alive(P) || !P.paused()) return;
+      P.currentTime(P.currentTime() + 0.001);
+    }, 250);
   }
 
   function togglePreview() {
