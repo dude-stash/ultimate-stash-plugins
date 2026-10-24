@@ -89,7 +89,9 @@ leave the old one behind.
 Stash can't be told a new oshash directly, so after writing, the plugin queues
 a scan of the files whose bytes changed. The scan keeps each file's scene and
 updates its oshash. Files that already had the same metadata are not touched
-and not rescanned.
+and not rescanned, unless their oshash on disk no longer matches Stash's (for
+example after a write whose rescan never ran); saving the scene puts those
+right too.
 
 A scan that sees a new oshash also drops the file's phash, in case the video
 changed. Writing atoms doesn't change the video, so the phash is still right:
@@ -99,9 +101,10 @@ was already queued, such as the one Scene Trimmer runs after a trim.
 
 This happens in two small jobs, **Update file fingerprints** and **Restore
 phashes**, queued behind whatever is already waiting. Stash runs one job at a
-time, so the scan usually follows within a few seconds of the write. Until it
-finishes, don't move the file.
-Turn off *Rescan Changed Files* only if you rescan yourself, with **Rescan**
+time, so the scan usually follows within a few seconds of the write. It looks
+the file up in Stash when it starts, so a file renamed or moved through Stash or
+a plugin in the meantime is still found; until it finishes, don't move the file
+by hand. Turn off *Rescan Changed Files* only if you rescan yourself, with **Rescan**
 ticked.
 
 ## Good to know
@@ -114,6 +117,10 @@ ticked.
   moves all the video data after it along: a few seconds on an SSD, a minute
   or more for a large file on a slow or network drive. It leaves spare room, so
   later edits are quick.
+- Another plugin renaming or moving a file while it is written (RenameFile, Tag
+  File Organizer) is fine as long as it stays on the same drive: the write
+  follows the file, and on Linux the log says where it went. A move to another
+  drive copies the file, and a copy taken mid-write is broken.
 - Don't cancel a **Write scene metadata** or **Export Metadata** job, or stop
   Stash, while a file is being written. A write stopped while it moves the
   video leaves a file that stops playing partway through.
