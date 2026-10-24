@@ -68,18 +68,26 @@ RESTORE_TASK = "Restore phashes"
 _STRING_SETTINGS = {"genreTagNames", "ignoreTagNames"}
 
 
-def oshash(path):
-    """Stash's file hash: file size plus the 64-bit little-endian sums of the first and last 64 KB."""
-    size = os.path.getsize(path)
+def oshash(f):
+    """Stash's hash of an open file: its size plus the 64-bit little-endian sums of the first and last 64 KB."""
+    size = os.fstat(f.fileno()).st_size
     h = size
-    with open(path, "rb") as f:
-        for offset in (0, max(0, size - 65536)):
-            f.seek(offset)
-            chunk = f.read(65536)
-            chunk = chunk[: len(chunk) // 8 * 8]
-            for (v,) in struct.iter_unpack("<Q", chunk):
-                h = (h + v) & 0xFFFFFFFFFFFFFFFF
+    for offset in (0, max(0, size - 65536)):
+        f.seek(offset)
+        chunk = f.read(65536)
+        chunk = chunk[: len(chunk) // 8 * 8]
+        for (v,) in struct.iter_unpack("<Q", chunk):
+            h = (h + v) & 0xFFFFFFFFFFFFFFFF
     return f"{h:016x}"
+
+
+def _moved_to(f, path):
+    """Where an open file is now if it is no longer at path, or None. Only Linux can tell; elsewhere this is None."""
+    try:
+        now = os.readlink(f"/proc/self/fd/{f.fileno()}")
+    except OSError:
+        return None
+    return None if now == os.path.realpath(path) else now
 
 
 def rescan_changed(stash, changed, settings):
@@ -302,16 +310,31 @@ def process_scene(stash, scene, settings, dry_run):
         if ext not in MP4_EXTENSIONS:
             log(f"Scene {scene_id}: skipping non-MP4 file: {path}")
             continue
-        if not os.path.exists(path):
-            log(f"Scene {scene_id}: file not found: {path}", "WARNING")
+        if dry_run:
+            if os.path.exists(path):
+                _preview(path, scene_id, new_meta)
+            else:
+                log(f"Scene {scene_id}: file not found: {path}", "WARNING")
             continue
 
-        if dry_run:
-            _preview(path, scene_id, new_meta)
-        else:
-            before = oshash(path)
-            if _write(path, scene_id, new_meta) and oshash(path) != before:
-                changed.append((f["id"], path))
+        try:
+            # One open file for the write and the oshash, so another plugin renaming or moving it meanwhile doesn't lose it
+            with open(path, "rb+") as fobj:
+                _write(fobj, path, scene_id, new_meta)
+                now = oshash(fobj)
+                moved = _moved_to(fobj, path)
+        except FileNotFoundError:
+            log(f"Scene {scene_id}: {path} was moved or renamed before it could be written; "
+                f"it is written the next time the scene is saved", "WARNING")
+            continue
+        except Exception as exc:
+            log(f"Scene {scene_id}: failed writing {path}: {exc}", "ERROR")
+            continue
+        if moved:
+            log(f"Scene {scene_id}: {path} was moved or renamed while it was written; it is now {moved}")
+        # Comparing with Stash's oshash rather than the one before the write also catches a file an earlier write left stale
+        if now != f.get("oshash"):
+            changed.append((f["id"], path))
 
     return changed
 
@@ -342,25 +365,21 @@ def _preview(path, scene_id, new_meta):
         eprint(f"  [WOULD WRITE {changed} atom(s)]")
 
 
-def _write(path, scene_id, new_meta):
-    """Write the atoms that differ from the file's and return True, or False if none differ or the write failed."""
-    try:
-        mp4 = MP4(path)
-        if mp4.tags is None:
-            mp4.add_tags()
-        # Saving rewrites the file and changes its oshash, so skip it when another plugin's edit left the atoms as they are
-        stale = {key: val for key, val in new_meta.items() if mp4.tags.get(key) != val}
-        if not stale:
-            log(f"Scene {scene_id}: already up to date → {path}", "DEBUG")
-            return False
-        for key, val in stale.items():
-            mp4.tags[key] = val
-        mp4.save()
-        log(f"Scene {scene_id}: wrote {', '.join(_atom_label(k) for k in stale)} → {path}")
-        return True
-    except Exception as exc:
-        log(f"Scene {scene_id}: failed writing {path}: {exc}", "ERROR")
+def _write(fobj, path, scene_id, new_meta):
+    """Write the atoms that differ from those in the open file and return True, or False if none differ."""
+    mp4 = MP4(fobj)
+    if mp4.tags is None:
+        mp4.add_tags()
+    # Saving rewrites the file and changes its oshash, so skip it when another plugin's edit left the atoms as they are
+    stale = {key: val for key, val in new_meta.items() if mp4.tags.get(key) != val}
+    if not stale:
+        log(f"Scene {scene_id}: already up to date → {path}", "DEBUG")
         return False
+    for key, val in stale.items():
+        mp4.tags[key] = val
+    mp4.save(fobj)
+    log(f"Scene {scene_id}: wrote {', '.join(_atom_label(k) for k in stale)} → {path}")
+    return True
 
 
 def handle_hook(stash, args):

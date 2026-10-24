@@ -6,7 +6,7 @@ PLUGIN_ID = "StashMetadataMapper"
 
 SCENE_FIELDS = """
   id title details date rating100
-  files { id path }
+  files { id path oshash: fingerprint(type: "oshash") }
   studio { name }
   performers { name }
   tags { name }
