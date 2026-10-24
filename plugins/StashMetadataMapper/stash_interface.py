@@ -6,7 +6,7 @@ PLUGIN_ID = "StashMetadataMapper"
 
 SCENE_FIELDS = """
   id title details date rating100
-  files { path phash: fingerprint(type: "phash") }
+  files { id path }
   studio { name }
   performers { name }
   tags { name }
@@ -80,6 +80,16 @@ class StashInterface:
         query = ("mutation($id: ID!, $task: String, $desc: String, $args: Map) "
                  "{ runPluginTask(plugin_id: $id, task_name: $task, description: $desc, args_map: $args) }")
         return self.call_gql(query, {"id": PLUGIN_ID, "task": task_name, "desc": description, "args": args})
+
+    def find_files(self, ids):
+        if not ids:
+            return []
+        query = 'query($ids: [ID!]) { findFiles(ids: $ids) { files { id path phash: fingerprint(type: "phash") } } }'
+        return self.call_gql(query, {"ids": [str(i) for i in ids]})["findFiles"]["files"]
+
+    def set_phash(self, file_id, phash):
+        query = "mutation($input: FileSetFingerprintsInput!) { fileSetFingerprints(input: $input) }"
+        return self.call_gql(query, {"input": {"id": str(file_id), "fingerprints": [{"type": "phash", "value": phash}]}})
 
     def rescan_files(self, paths, generate_phashes):
         query = "mutation($input: ScanMetadataInput!) { metadataScan(input: $input) }"
