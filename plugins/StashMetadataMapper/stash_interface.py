@@ -72,6 +72,15 @@ class StashInterface:
         variables = {"f": {"page": page, "per_page": per_page, "sort": "id", "direction": "ASC"}}
         return self.call_gql(query, variables)["findScenes"]
 
+    def waiting_job_descriptions(self):
+        jobs = self.call_gql("{ jobQueue { status description } }")["jobQueue"] or []
+        return {j["description"] for j in jobs if j["status"] == "READY"}
+
+    def run_task(self, task_name, description, args):
+        query = ("mutation($id: ID!, $task: String, $desc: String, $args: Map) "
+                 "{ runPluginTask(plugin_id: $id, task_name: $task, description: $desc, args_map: $args) }")
+        return self.call_gql(query, {"id": PLUGIN_ID, "task": task_name, "desc": description, "args": args})
+
     def rescan_files(self, paths, generate_phashes):
         query = "mutation($input: ScanMetadataInput!) { metadataScan(input: $input) }"
         return self.call_gql(query, {"input": {

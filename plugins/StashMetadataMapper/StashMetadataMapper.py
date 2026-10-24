@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import shutil
 import struct
 import sys
 
@@ -56,6 +57,12 @@ EXPORTED_INPUT_FIELDS = {
     "title", "details", "date", "rating100", "studio_id", "performer_ids",
     "tag_ids", "stash_ids", "cover_image", "primary_file_id",
 }
+
+# The task the save hook queues to write a scene's files
+WRITE_TASK = "Write scene metadata"
+
+# Free space to leave on top of the copy each write makes
+COPY_HEADROOM = 256 * 2**20
 
 # Settings that are strings, not booleans
 _STRING_SETTINGS = {"genreTagNames", "ignoreTagNames"}
@@ -308,27 +315,64 @@ def _preview(path, scene_id, new_meta):
 
 
 def _write(path, scene_id, new_meta):
-    """Write the atoms that differ from the file's and return True, or False if none differ or the write failed."""
+    """Write the atoms that differ from the file's and return True, or False if none differ or the write failed.
+
+    The atoms go into a copy beside the file, which replaces it only once it reads back right, so a write that is
+    killed, crashes or runs out of space leaves the original as it was.
+    """
+    tmp = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".smm-tmp")
     try:
         mp4 = MP4(path)
-        if mp4.tags is None:
-            mp4.add_tags()
+        current = mp4.tags or {}
         # Saving rewrites the file and changes its oshash, so skip it when another plugin's edit left the atoms as they are
-        stale = {key: val for key, val in new_meta.items() if mp4.tags.get(key) != val}
+        stale = {key: val for key, val in new_meta.items() if current.get(key) != val}
         if not stale:
             log(f"Scene {scene_id}: already up to date → {path}", "DEBUG")
             return False
+
+        size = os.path.getsize(path)
+        free = shutil.disk_usage(os.path.dirname(path)).free
+        if free < size + COPY_HEADROOM:
+            raise RuntimeError(f"not enough free space for a copy ({free // 2**20} MB free, {size // 2**20} MB needed)")
+        shutil.copy2(path, tmp)
+        if os.path.getsize(tmp) != size:
+            raise RuntimeError("the copy came out a different size")
+
+        copy = MP4(tmp)
+        if copy.tags is None:
+            copy.add_tags()
         for key, val in stale.items():
-            mp4.tags[key] = val
-        mp4.save()
+            copy.tags[key] = val
+        copy.save()
+
+        check = MP4(tmp)
+        if abs(check.info.length - mp4.info.length) > 0.01:
+            raise RuntimeError(f"the copy is {check.info.length:.2f} s long, the file {mp4.info.length:.2f} s")
+        wrong = [key for key, val in new_meta.items() if (check.tags or {}).get(key) != val]
+        if wrong:
+            raise RuntimeError(f"the copy did not keep {', '.join(_atom_label(k) for k in wrong)}")
+
+        fd = os.open(tmp, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        os.replace(tmp, path)
         log(f"Scene {scene_id}: wrote {', '.join(_atom_label(k) for k in stale)} → {path}")
         return True
     except Exception as exc:
-        log(f"Scene {scene_id}: failed writing {path}: {exc}", "ERROR")
+        log(f"Scene {scene_id}: did not write {path}, the file is unchanged: {exc}", "ERROR")
         return False
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            log(f"Scene {scene_id}: could not remove the temporary copy {tmp}: {exc}", "WARNING")
 
 
-def handle_hook(stash, args, settings, dry_run):
+def handle_hook(stash, args):
     hook_ctx = args.get("hookContext") or {}
     scene_id = hook_ctx.get("id")
     if not scene_id:
@@ -341,11 +385,24 @@ def handle_hook(stash, args, settings, dry_run):
     # Stash waits for post hooks before answering the update, so edits that write no atoms (another plugin's custom field, play count) must not wait on a file write
     if not EXPORTED_INPUT_FIELDS.intersection(fields):
         return f"skipped scene {scene_id}: no exported field changed"
+    # Stash kills this hook when the save that fired it is cancelled; a job outlives the save and runs one at a time with scans, trims and other writes
+    desc = f"Stash Metadata Mapper: write scene {scene_id}"
+    if desc in stash.waiting_job_descriptions():
+        return f"scene {scene_id} is already queued"
+    stash.run_task(WRITE_TASK, desc, {"scene_id": str(scene_id)})
+    return f"queued scene {scene_id}"
+
+
+def handle_write(stash, args, settings):
+    scene_id = args.get("scene_id")
+    if not scene_id:
+        log("This task is queued when a scene is saved; run Export Metadata to write every scene", "WARNING")
+        return "no scene id"
     scene = stash.find_scene(scene_id)
     if not scene:
         log(f"Scene {scene_id} not found", "WARNING")
         return f"scene {scene_id} not found"
-    rescan_changed(stash, process_scene(stash, scene, settings, dry_run), settings)
+    rescan_changed(stash, process_scene(stash, scene, settings, False), settings)
     return f"processed scene {scene_id}"
 
 
@@ -389,7 +446,11 @@ def main():
     if mode == "hook":
         if not settings["runOnSceneUpdate"]:
             return "disabled in settings"
-        return handle_hook(stash, args, settings, dry_run)
+        return handle_hook(stash, args)
+    if mode == "write":
+        if not settings["runOnSceneUpdate"]:
+            return "disabled in settings"
+        return handle_write(stash, args, settings)
     if mode == "export":
         if not dry_run and not settings["runManually"]:
             log("disabled in settings: turn on 'Allow the manual task to write files'", "WARNING")
