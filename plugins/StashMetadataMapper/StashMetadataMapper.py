@@ -4,7 +4,6 @@
 import json
 import os
 import re
-import shutil
 import struct
 import sys
 
@@ -60,9 +59,6 @@ EXPORTED_INPUT_FIELDS = {
 
 # The task the save hook queues to write a scene's files
 WRITE_TASK = "Write scene metadata"
-
-# Free space to leave on top of the copy each write makes
-COPY_HEADROOM = 256 * 2**20
 
 # Settings that are strings, not booleans
 _STRING_SETTINGS = {"genreTagNames", "ignoreTagNames"}
@@ -315,65 +311,24 @@ def _preview(path, scene_id, new_meta):
 
 
 def _write(path, scene_id, new_meta):
-    """Write the atoms that differ from the file's and return True, or False if none differ or the write failed.
-
-    The atoms go into a copy beside the file, which replaces it only once it reads back right, so a write that is
-    killed, crashes or runs out of space leaves the original as it was.
-    """
-    tmp = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".smm-tmp")
+    """Write the atoms that differ from the file's and return True, or False if none differ or the write failed."""
     try:
         mp4 = MP4(path)
-        current = mp4.tags or {}
+        if mp4.tags is None:
+            mp4.add_tags()
         # Saving rewrites the file and changes its oshash, so skip it when another plugin's edit left the atoms as they are
-        stale = {key: val for key, val in new_meta.items() if current.get(key) != val}
+        stale = {key: val for key, val in new_meta.items() if mp4.tags.get(key) != val}
         if not stale:
             log(f"Scene {scene_id}: already up to date → {path}", "DEBUG")
             return False
-
-        size = os.path.getsize(path)
-        free = shutil.disk_usage(os.path.dirname(path)).free
-        if free < size + COPY_HEADROOM:
-            raise RuntimeError(f"not enough free space for a copy ({free // 2**20} MB free, {size // 2**20} MB needed)")
-        shutil.copyfile(path, tmp)
-        try:
-            shutil.copymode(path, tmp)
-        except OSError:
-            pass  # drives without Unix permissions (exFAT, NTFS) or owned by another user refuse chmod; the copy is still good
-        if os.path.getsize(tmp) != size:
-            raise RuntimeError("the copy came out a different size")
-
-        copy = MP4(tmp)
-        if copy.tags is None:
-            copy.add_tags()
         for key, val in stale.items():
-            copy.tags[key] = val
-        copy.save()
-
-        check = MP4(tmp)
-        if abs(check.info.length - mp4.info.length) > 0.01:
-            raise RuntimeError(f"the copy is {check.info.length:.2f} s long, the file {mp4.info.length:.2f} s")
-        wrong = [key for key, val in new_meta.items() if (check.tags or {}).get(key) != val]
-        if wrong:
-            raise RuntimeError(f"the copy did not keep {', '.join(_atom_label(k) for k in wrong)}")
-
-        fd = os.open(tmp, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        os.replace(tmp, path)
+            mp4.tags[key] = val
+        mp4.save()
         log(f"Scene {scene_id}: wrote {', '.join(_atom_label(k) for k in stale)} → {path}")
         return True
     except Exception as exc:
-        log(f"Scene {scene_id}: did not write {path}, the file is unchanged: {exc}", "ERROR")
+        log(f"Scene {scene_id}: failed writing {path}: {exc}", "ERROR")
         return False
-    finally:
-        try:
-            os.unlink(tmp)
-        except FileNotFoundError:
-            pass
-        except OSError as exc:
-            log(f"Scene {scene_id}: could not remove the temporary copy {tmp}: {exc}", "WARNING")
 
 
 def handle_hook(stash, args):
