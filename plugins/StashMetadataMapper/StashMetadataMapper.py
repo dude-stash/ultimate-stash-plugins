@@ -334,7 +334,11 @@ def _write(path, scene_id, new_meta):
         free = shutil.disk_usage(os.path.dirname(path)).free
         if free < size + COPY_HEADROOM:
             raise RuntimeError(f"not enough free space for a copy ({free // 2**20} MB free, {size // 2**20} MB needed)")
-        shutil.copy2(path, tmp)
+        shutil.copyfile(path, tmp)
+        try:
+            shutil.copymode(path, tmp)
+        except OSError:
+            pass  # network shares (CIFS/SMB) often refuse chmod; the copy is still good
         if os.path.getsize(tmp) != size:
             raise RuntimeError("the copy came out a different size")
 
