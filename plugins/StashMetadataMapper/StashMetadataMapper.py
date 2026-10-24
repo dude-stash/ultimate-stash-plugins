@@ -338,7 +338,7 @@ def _write(path, scene_id, new_meta):
         try:
             shutil.copymode(path, tmp)
         except OSError:
-            pass  # network shares (CIFS/SMB) often refuse chmod; the copy is still good
+            pass  # drives without Unix permissions (exFAT, NTFS) or owned by another user refuse chmod; the copy is still good
         if os.path.getsize(tmp) != size:
             raise RuntimeError("the copy came out a different size")
 
