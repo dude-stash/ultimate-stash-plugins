@@ -5,10 +5,8 @@ description, date, studio, performers, rating, tags, cover image and Stash IDs.
 The file then describes itself, and the metadata travels with it outside your
 Stash database.
 
-It only changes the file's metadata atoms. The video is not re-encoded, so it
-is lossless. Each write goes to a copy beside the file, which replaces the
-file only once it reads back right, so a write that is interrupted never
-leaves a damaged file.
+It edits the file's metadata atoms in place. The video is not re-encoded, so it
+is lossless.
 
 ## Requirements
 
@@ -105,9 +103,11 @@ ticked.
   write. Matching by phash still does.
 - Only the video files Stash knows about are written. Scenes only; images and
   galleries aren't handled.
-- A write needs free space for one copy of the file on the same drive. Without
-  it the write is skipped and logged, and the file is left as it was.
-- If Stash or the server stops mid-write, a hidden `.<file name>.smm-tmp`
-  copy can be left beside the file. Stash ignores it, and the next write of
-  that file removes it.
-- Back up before the first bulk run anyway: the plugin writes into your files.
+- The first write to a file usually has to make room for the metadata, which
+  moves all the video data after it along: a few seconds on an SSD, a minute
+  or more for a large file on a slow or network drive. It leaves spare room, so
+  later edits are quick.
+- Don't cancel a **Write scene metadata** or **Export Metadata** job, or stop
+  Stash, while a file is being written. A write stopped while it moves the
+  video leaves a file that stops playing partway through.
+- Back up before the first bulk run: the plugin edits your files in place.
