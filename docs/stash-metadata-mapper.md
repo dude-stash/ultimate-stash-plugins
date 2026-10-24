@@ -5,8 +5,10 @@ description, date, studio, performers, rating, tags, cover image and Stash IDs.
 The file then describes itself, and the metadata travels with it outside your
 Stash database.
 
-It edits the file's metadata atoms in place. The video is not re-encoded or
-copied, so it is quick and lossless.
+It only changes the file's metadata atoms. The video is not re-encoded, so it
+is lossless. Each write goes to a copy beside the file, which replaces the
+file only once it reads back right, so a write that is interrupted never
+leaves a damaged file.
 
 ## Requirements
 
@@ -21,7 +23,7 @@ Open **Settings → Plugins → Stash Metadata Mapper**.
 
 | Setting | What it does |
 | --- | --- |
-| **Write when a scene is saved** | The hook: saving a scene writes its metadata straight away. |
+| **Write when a scene is saved** | The hook: saving a scene queues a job that writes its metadata. |
 | **Allow the manual task to write files** | Lets the **Export Metadata** task write into your files. |
 | **Rescan Changed Files** | Rescans files whose bytes changed. See *Why it rescans*. |
 | **Export Title / Description / Date / Studio / Cast / Rating / Artwork / Stash IDs** | Turn each field on or off. All are on by default. |
@@ -55,10 +57,16 @@ Fields that are empty in Stash are not written.
 
 ## Running it
 
-- **On save:** with *Write when a scene is saved* on, saving a scene writes
-  its metadata into every MP4 file it has. Identify and bulk edits count as
-  saves. Library scans never write, so they stay fast: a file added to a
-  scene by a scan is not written until you save the scene or run the task.
+- **On save:** with *Write when a scene is saved* on, saving a scene queues a
+  **Write scene metadata** job that writes its metadata into every MP4 file it
+  has. The save itself doesn't wait for the file, and Stash runs the job one at
+  a time with its other jobs, so a write never overlaps another write, a scan
+  or a trim. A scene saved again before its job starts is written once.
+  Identify and bulk edits count as saves. Library scans never write, so they
+  stay fast: a file added to a scene by a scan is not written until you save
+  the scene or run the task. Saves that change none of the exported fields,
+  such as another plugin storing a custom field (Scene Trimmer's trim ranges),
+  don't queue anything.
 - **Manually:** under **Settings → Tasks → Plugin Tasks**, run **Export
   Metadata (Dry Run)** to see in the log what would change, atom by atom. Then
   run **Export Metadata** to write every scene in your library. This one needs
@@ -97,4 +105,9 @@ ticked.
   write. Matching by phash still does.
 - Only the video files Stash knows about are written. Scenes only; images and
   galleries aren't handled.
-- Back up before the first bulk run: the plugin edits your files in place.
+- A write needs free space for one copy of the file on the same drive. Without
+  it the write is skipped and logged, and the file is left as it was.
+- If Stash or the server stops mid-write, a hidden `.<file name>.smm-tmp`
+  copy can be left beside the file. Stash ignores it, and the next write of
+  that file removes it.
+- Back up before the first bulk run anyway: the plugin writes into your files.
